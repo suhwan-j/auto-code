@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from deepagents import create_deep_agent, SubAgent
 from deepagents.backends import LocalShellBackend
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.store.memory import InMemoryStore
 
 from atom.tools import git_tool, web_search_tool, fetch_url_tool, ask_user_tool
@@ -139,17 +140,37 @@ SUBAGENT_CONFIGS: list[SubAgent] = [
 ]
 
 
+def _create_checkpointer():
+    """Create a SqliteSaver checkpointer at ~/.atom/checkpoints.db.
+
+    Falls back to MemorySaver if SQLite setup fails.
+    """
+    try:
+        import sqlite3
+        db_dir = Path.home() / ".atom"
+        db_dir.mkdir(parents=True, exist_ok=True)
+        db_path = db_dir / "checkpoints.db"
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        saver = SqliteSaver(conn)
+        saver.setup()
+        return saver
+    except Exception as e:
+        import sys
+        print(f"\033[0;90m  [warn] SQLite checkpointer failed ({e}), using in-memory\033[0m", file=sys.stderr)
+        return MemorySaver()
+
+
 def create_atom_agent(config: AgentConfig):
     """Create the Atom agent wrapping create_deep_agent().
 
     Returns:
         tuple: (agent, checkpointer, store, auto_dream_extractor)
     """
-    checkpointer = MemorySaver()
+    checkpointer = _create_checkpointer()
     store = InMemoryStore()
 
     system_prompt = _build_system_prompt(config)
-    model = _resolve_model(config.model)
+    model = _resolve_model(config.model, config.provider)
 
     # Build parallel subagent instances for orchestrator
     _build_orchestrator_subagents(model, config)
@@ -209,7 +230,10 @@ def _build_orchestrator_subagents(model, config: AgentConfig):
                 inherit_env=True,
             ),
             checkpointer=MemorySaver(),
-            middleware=[SanitizeMiddleware()],
+            middleware=[
+                SanitizeMiddleware(),
+                StallDetectorMiddleware(max_empty_turns=2),
+            ],
         )
         subagent_instances[name] = subagent
 
@@ -247,40 +271,88 @@ def _build_custom_middleware(config: AgentConfig, store):
     return middleware_list, auto_dream
 
 
-def _resolve_model(model_name: str):
-    """Resolve model — supports OpenRouter via OPENROUTER_API_KEY."""
+def _resolve_model(model_name: str, provider: str = "auto"):
+    """Resolve model — supports OpenRouter, Anthropic, OpenAI, and vLLM.
+
+    Args:
+        model_name: Model name/identifier.
+        provider: "auto" to detect from env, or explicit provider name.
+    """
     load_dotenv()
 
-    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
-    openrouter_base = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    providers = {
+        "openrouter": _make_openrouter,
+        "anthropic": _make_anthropic,
+        "openai": _make_openai,
+        "vllm": _make_vllm,
+    }
 
-    if openrouter_key:
-        from langchain_openai import ChatOpenAI
-        model_map = {
-            "claude-sonnet-4-5-20250929": "anthropic/claude-sonnet-4-5",
-            "claude-sonnet-4-5": "anthropic/claude-sonnet-4-5",
-            "claude-haiku-4-5-20251001": "anthropic/claude-haiku-4-5",
-            "claude-haiku-4-5": "anthropic/claude-haiku-4-5",
-            "claude-opus-4-5": "anthropic/claude-opus-4-5",
-        }
-        resolved_name = model_map.get(model_name, model_name)
-        return ChatOpenAI(
-            model=resolved_name,
-            openai_api_key=openrouter_key,
-            openai_api_base=openrouter_base,
-        )
+    if provider != "auto":
+        factory = providers.get(provider)
+        if factory is None:
+            raise RuntimeError(f"Unknown provider: {provider}")
+        model = factory(model_name)
+        if model is None:
+            raise RuntimeError(f"Provider '{provider}' is not configured. Check your .env file.")
+        return model
 
-    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
-    if anthropic_key:
-        from langchain_anthropic import ChatAnthropic
-        return ChatAnthropic(model_name=model_name, api_key=anthropic_key)
+    # Auto-detect: try each provider in priority order
+    for factory in providers.values():
+        model = factory(model_name)
+        if model is not None:
+            return model
 
-    openai_key = os.environ.get("OPENAI_API_KEY")
-    if openai_key:
-        from langchain_openai import ChatOpenAI
-        return ChatOpenAI(model=model_name, openai_api_key=openai_key)
+    raise RuntimeError(
+        "No API key found. Set OPENROUTER_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, or VLLM_BASE_URL."
+    )
 
-    raise RuntimeError("No API key found. Set OPENROUTER_API_KEY, ANTHROPIC_API_KEY, or OPENAI_API_KEY.")
+
+def _make_openrouter(model_name: str):
+    key = os.environ.get("OPENROUTER_API_KEY")
+    if not key:
+        return None
+    from langchain_openai import ChatOpenAI
+    model_map = {
+        "claude-sonnet-4-5-20250929": "anthropic/claude-sonnet-4-5",
+        "claude-sonnet-4-5": "anthropic/claude-sonnet-4-5",
+        "claude-haiku-4-5-20251001": "anthropic/claude-haiku-4-5",
+        "claude-haiku-4-5": "anthropic/claude-haiku-4-5",
+        "claude-opus-4-5": "anthropic/claude-opus-4-5",
+    }
+    return ChatOpenAI(
+        model=model_map.get(model_name, model_name),
+        openai_api_key=key,
+        openai_api_base=os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+        request_timeout=60,
+    )
+
+
+def _make_anthropic(model_name: str):
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        return None
+    from langchain_anthropic import ChatAnthropic
+    return ChatAnthropic(model_name=model_name, api_key=key)
+
+
+def _make_openai(model_name: str):
+    key = os.environ.get("OPENAI_API_KEY")
+    if not key:
+        return None
+    from langchain_openai import ChatOpenAI
+    return ChatOpenAI(model=model_name, openai_api_key=key)
+
+
+def _make_vllm(model_name: str):
+    base_url = os.environ.get("VLLM_BASE_URL")
+    if not base_url:
+        return None
+    from langchain_openai import ChatOpenAI
+    return ChatOpenAI(
+        model=model_name,
+        openai_api_key=os.environ.get("VLLM_API_KEY", "EMPTY"),
+        openai_api_base=base_url,
+    )
 
 
 def _build_system_prompt(config: AgentConfig) -> str:

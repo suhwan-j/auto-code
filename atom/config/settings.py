@@ -46,8 +46,9 @@ def ensure_api_keys():
         os.environ.get("ANTHROPIC_API_KEY")
         or os.environ.get("OPENAI_API_KEY")
         or os.environ.get("OPENROUTER_API_KEY")
+        or os.environ.get("VLLM_BASE_URL")
     )
     if not has_key:
         print("Error: Missing API key.")
-        print("Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY in .env")
+        print("Set ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, or VLLM_BASE_URL in .env")
         raise SystemExit(1)

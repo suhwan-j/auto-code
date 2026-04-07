@@ -17,6 +17,18 @@
 
 DeepAgents 프레임워크 기반의 터미널 자율 코딩 에이전트 CLI.
 
+## 주요 기능
+
+- **멀티 프로바이더** — OpenRouter, Anthropic, OpenAI, vLLM 지원 + 런타임 모델 전환
+- **병렬 서브에이전트** — coder, explorer, researcher, reviewer, planner를 동시 실행
+- **실시간 대시보드** — 서브에이전트 진행 상황, 플랜, 도구 호출을 라이브로 표시
+- **세션 영구 저장** — SQLite 기반 체크포인터로 프로세스 재시작 후에도 세션 복원
+- **인라인 자동완성** — `/` 입력 시 드롭다운 메뉴로 커맨드 선택 (prompt_toolkit)
+- **HITL (Human-in-the-Loop)** — 위험한 도구 실행 전 승인/거부/수정 선택
+- **Stall Detection** — 에이전트/서브에이전트가 멈추면 자동 감지 및 복구
+- **Auto-Dream Memory** — 대화에서 중요한 정보를 자동 추출하여 장기 기억 저장
+- **Git 안전 규칙** — force push, config 변경 등 위험 명령 자동 차단
+
 ## 설치
 
 ```bash
@@ -42,16 +54,20 @@ ANTHROPIC_API_KEY=sk-ant-...
 # 또는 OpenAI
 OPENAI_API_KEY=sk-...
 
+# vLLM (셀프 호스팅)
+VLLM_BASE_URL=http://localhost:8000/v1
+VLLM_API_KEY=EMPTY
+
 # 웹 검색 (선택)
 TAVILY_API_KEY=tvly-...
 
 # LangSmith 트레이싱 (선택)
 LANGSMITH_API_KEY=lsv2_...
 LANGSMITH_TRACING=true
-LANGSMITH_PROJECT=Atom
+LANGSMITH_PROJECT=ATOM-CODE
 ```
 
-API 키 우선순위: `OPENROUTER_API_KEY` > `ANTHROPIC_API_KEY` > `OPENAI_API_KEY`
+API 키 우선순위: `OPENROUTER_API_KEY` > `ANTHROPIC_API_KEY` > `OPENAI_API_KEY` > `VLLM_BASE_URL`
 
 ## 실행 방법
 
@@ -70,8 +86,6 @@ atom -n "버그를 찾아서 수정해줘"
 atom -n "pyproject.toml을 읽고 의존성 목록을 알려줘"
 ```
 
-단일 작업을 실행하고 결과를 출력한 뒤 종료합니다.
-
 ### 위치 인수로 작업 전달
 
 ```bash
@@ -85,8 +99,10 @@ atom "add error handling to the API endpoint"
 |------|------|
 | `-n TASK`, `--non-interactive TASK` | 비대화형 모드로 단일 작업 실행 |
 | `--auto-approve` | 모든 도구 실행을 자동 승인 (HITL 비활성화) |
-| `--model MODEL` | 사용할 모델 지정 (예: `anthropic/claude-sonnet-4-5`) |
+| `--model MODEL` | 사용할 모델 지정 |
+| `--provider PROVIDER` | LLM 프로바이더 지정 (`auto`, `openrouter`, `anthropic`, `openai`, `vllm`) |
 | `--resume SESSION_ID` | 이전 세션 이어서 작업 |
+| `--list-sessions` | 저장된 세션 목록 표시 |
 | `--verbose` | 도구 호출 및 결과를 상세히 표시 |
 
 ### 사용 예시
@@ -98,29 +114,136 @@ atom
 # 자동 승인으로 빠르게 작업
 atom --auto-approve -n "테스트 실행하고 결과 알려줘"
 
-# 모델 지정
-atom --model anthropic/claude-sonnet-4-5
-
-# 도구 호출 과정을 상세히 보기
-atom --verbose
+# 모델 + 프로바이더 지정
+atom --model Qwen/Qwen3-32B --provider vllm
 
 # 이전 세션 이어서 작업
 atom --resume session-1234567890
+
+# 저장된 세션 목록 보기
+atom --list-sessions
 ```
 
-## 슬래시 커맨드 (대화형 모드)
+## 슬래시 커맨드
+
+대화형 모드에서 `/`를 입력하면 자동완성 드롭다운이 표시됩니다.
 
 | 커맨드 | 설명 |
 |--------|------|
 | `/help` | 사용 가능한 커맨드 목록 표시 |
-| `/exit`, `/quit` | CLI 종료 |
-| `/clear` | 대화 초기화 (새 세션 시작) |
-| `/model` | 현재 사용 중인 모델 표시 |
-| `/session` | 현재 세션 ID 표시 |
+| `/new [설명]` | 새 세션 시작 (예: `/new fix login bug`) |
+| `/model [모델명] [프로바이더]` | 현재 모델 표시 또는 런타임 모델 전환 |
+| `/mode` | 모드 순환 (default → auto-approve → plan-only) |
+| `/session [번호\|ID]` | 현재 세션 정보 또는 세션 전환 |
+| `/sessions` | 저장된 세션 목록 (번호로 전환 가능) |
+| `/compact` | 컨텍스트 강제 압축 |
+| `/memory` | 추출된 장기 기억 표시 |
+| `/memory clear` | 모든 기억 삭제 |
+| `/tasks` | 활성 서브에이전트 작업 표시 |
+| `/status` | 에이전트 상태 (턴, 토큰, 메모리) |
+| `/clear` | `/new`와 동일 |
+| `/exit` | CLI 종료 |
+
+### 모델 런타임 전환
+
+세션 중에 모델을 변경할 수 있습니다:
+
+```
+◆ > /model anthropic/claude-sonnet-4-5
+  Switching model: Qwen/Qwen3-32B → anthropic/claude-sonnet-4-5...
+  Model switched to: anthropic/claude-sonnet-4-5 (provider: auto)
+
+◆ > /model Qwen/Qwen3-32B vllm
+  Switching model: anthropic/claude-sonnet-4-5 → Qwen/Qwen3-32B...
+  Model switched to: Qwen/Qwen3-32B (provider: vllm)
+```
+
+### 세션 관리
+
+세션 상태는 `~/.atom/checkpoints.db` (SQLite)에 영구 저장됩니다.
+
+```
+◆ > /sessions
+Sessions:  (use /session <number> to switch)
+   1) session-1775543300  (3 turns, 1m ago) ◀ current
+   2) session-1775542614  (12 turns, 15m ago) — fix login bug
+   3) session-1775540000  (5 turns, 1h ago)
+
+◆ > /session 2
+Switched to session: session-1775542614 — fix login bug
+  Turns: 12 · Messages: 34
+
+◆ > /new implement search feature
+New session: session-1775544000 — implement search feature
+```
+
+## 모드
+
+`Shift+Tab` 또는 `/mode`로 순환합니다:
+
+| 모드 | 아이콘 | 설명 |
+|------|--------|------|
+| default | ◆ | 위험한 도구 실행 시 승인 요청 |
+| auto-approve | ⚡ | 모든 도구 실행 자동 승인 |
+| plan-only | 📋 | 계획만 수립, 실행 안 함 |
+
+## HITL (Human-in-the-Loop)
+
+기본 모드에서 파일 쓰기, 셸 명령 등 실행 시 승인을 요청합니다:
+
+```
+[APPROVAL REQUIRED] execute
+  command: npm install express
+  (a)pprove / (r)eject / (e)dit ?
+  >
+```
+
+- `a` 또는 Enter: 승인하고 실행
+- `r`: 거부 (에이전트가 대안 모색)
+- `e`: 인수를 자연어로 수정하여 실행 (LLM이 수정 적용)
+
+## 병렬 서브에이전트
+
+복잡한 작업은 여러 서브에이전트가 동시에 처리합니다:
+
+| 타입 | 역할 |
+|------|------|
+| `coder` | 코드 작성, 파일 생성, 빌드/테스트 |
+| `explorer` | 코드베이스 탐색, 구조 분석 (읽기 전용) |
+| `researcher` | 웹 검색, 문서 조사 |
+| `reviewer` | 코드 리뷰, 품질 분석 (읽기 전용) |
+| `planner` | 복잡한 요청 분석, 계획 수립 |
+
+실행 중 실시간 대시보드가 표시됩니다:
+
+```
+╭─ ◈ Atom Status ───────────────────────────────────────╮
+│ Executing  Plan: 2/5 · Tools: 12 · Agents: 3
+├── Plan ────────────────────────────────────────────────┤
+│  ████████░░░░░░░░░░░░ 40%
+│  ✓ 프로젝트 구조 생성
+│  ✓ 의존성 설치
+│  ▸ 프론트엔드 구현
+│  ○ 백엔드 구현
+│  ○ 테스트 및 검증
+├── Subagents (3 active) ────────────────────────────────┤
+│  ◈ coder-0 (15s, 4 tools)
+│    Create index.html with React setup
+│    ⚡ write_file index.html
+│  ◈ coder-1 (12s, 3 tools)
+│    Create src/App.tsx component
+│  ◈ coder-2 (8s, 2 tools)
+│    Create api/handler.ts
+├── Recent ──────────────────────────────────────────────┤
+│  + coder-0: index.html
+│  + coder-1: App.tsx
+│  $ coder-2: npm install
+╰────────────────────────────────────────────────────────╯
+```
 
 ## 도구 (Tools)
 
-### DeepAgents 내장 도구 (자동 제공)
+### DeepAgents 내장 도구
 
 | 도구 | 설명 |
 |------|------|
@@ -130,35 +253,19 @@ atom --resume session-1234567890
 | `glob` | 파일 패턴 매칭 |
 | `grep` | 파일 내용 검색 |
 | `ls` | 디렉토리 목록 |
-| `write_todos` | 태스크 관리 |
-| `execute` | 셸 명령 실행 (백엔드 제공) |
+| `write_todos` | 태스크 관리 (플랜 생성) |
+| `execute` | 셸 명령 실행 |
+| `task` | 단일 서브에이전트 위임 |
+| `orchestrate_tool` | 병렬 서브에이전트 실행 |
 
 ### Atom 커스텀 도구
 
 | 도구 | 설명 |
 |------|------|
 | `git_tool` | Git 연산 (안전 규칙 내장) |
-| `bash_tool` | 셸 명령 실행 (타임아웃, 출력 제한) |
 | `web_search_tool` | Tavily 웹 검색 |
 | `fetch_url_tool` | URL 콘텐츠 가져오기 |
 | `ask_user_tool` | 사용자에게 질문 |
-
-## HITL (Human-in-the-Loop)
-
-기본 모드에서 `bash_tool` 실행 시 사용자 승인을 요청합니다:
-
-```
-[APPROVAL REQUIRED] bash_tool
-  command: npm install express
-  (a)pprove / (r)eject / (e)dit ?
-  >
-```
-
-- `a` 또는 Enter: 승인하고 실행
-- `r`: 거부 (에이전트가 대안 모색)
-- `e`: 인수를 수정하여 실행
-
-`--auto-approve` 플래그로 모든 승인을 자동 처리할 수 있습니다.
 
 ## Git 안전 규칙
 
@@ -169,6 +276,14 @@ atom --resume session-1234567890
 - `main`/`master` 브랜치에 force push 차단
 - 위험한 명령 (`push --force`, `reset --hard`, `rebase` 등)은 사용자 승인 필요
 - 민감한 파일 (`.env`, `credentials` 등) 스테이징 시 경고
+
+## 미들웨어 레이어
+
+| 레이어 | 설명 |
+|--------|------|
+| `SanitizeMiddleware` | 서로게이트 문자 정리 (API 직렬화 오류 방지) |
+| `StallDetectorMiddleware` | 에이전트 멈춤 감지 → 메시지 주입 → 모델 전환 → 사용자 질문 → 중단 |
+| `AutoDreamMiddleware` | 대화에서 중요 정보 자동 추출하여 장기 기억 저장 |
 
 ## 설정 파일
 
@@ -184,45 +299,58 @@ atom --resume session-1234567890
 // .atom/settings.json (예시)
 {
   "model": "anthropic/claude-sonnet-4-5",
+  "provider": "openrouter",
   "permissions": {
     "mode": "default"
+  },
+  "memory": {
+    "auto_extract": true
+  },
+  "loop": {
+    "stall_detection": true
   }
 }
 ```
 
-## 모델 지원
+## 데이터 저장 경로
 
-OpenRouter를 통해 다양한 모델을 사용할 수 있습니다:
-
-| 모델 | OpenRouter ID |
-|------|---------------|
-| Claude Sonnet 4.5 | `anthropic/claude-sonnet-4-5` |
-| Claude Haiku 4.5 | `anthropic/claude-haiku-4-5` |
-| Claude Opus 4.5 | `anthropic/claude-opus-4-5` |
+| 경로 | 설명 |
+|------|------|
+| `~/.atom/checkpoints.db` | 세션 대화 상태 (SQLite) |
+| `~/.atom/sessions.json` | 세션 메타데이터 (이름, 턴 수, 시간) |
+| `~/.atom/settings.json` | 사용자 전역 설정 |
+| `.atom/settings.json` | 프로젝트별 설정 |
 
 ## 아키텍처
 
 ```
 atom/
-├── cli.py              # CLI 진입점, 대화형/비대화형 모드
-├── core/
-│   ├── agent.py        # create_deep_agent() 래퍼
-│   └── models.py       # LLM 프로바이더 초기화
-├── tools/              # 커스텀 도구
-│   ├── git.py          # Git 도구 (안전 규칙)
-│   ├── bash.py         # Bash 도구
-│   ├── web_search.py   # 웹 검색 (Tavily)
-│   ├── fetch_url.py    # URL 가져오기
-│   └── ask_user.py     # 사용자 질문
+├── cli.py                # CLI 진입점, 대화형/비대화형 모드
+├── input.py              # prompt_toolkit 기반 입력 (자동완성 드롭다운)
+├── orchestrator.py       # 병렬 서브에이전트 실행 엔진
+├── status.py             # 실시간 대시보드 렌더러
+├── utils.py              # 텍스트 정리 유틸리티
 ├── commands/
-│   └── registry.py     # 슬래시 커맨드 처리
+│   └── registry.py       # 슬래시 커맨드 핸들러
 ├── config/
-│   ├── schema.py       # Pydantic 설정 스키마
-│   └── settings.py     # 설정 로더
-├── layers/             # 커스텀 레이어
-│   ├── stall_detector.py
-│   └── context_compaction.py
-└── session/            # 세션 관리
+│   ├── schema.py         # Pydantic 설정 스키마
+│   └── settings.py       # 5단계 설정 로더
+├── core/
+│   ├── agent.py          # create_deep_agent() 래퍼 + 모델/체크포인터 초기화
+│   └── models.py         # 경량 LLM 초기화 (Auto-Dream 등)
+├── layers/
+│   ├── auto_dream.py     # 자동 기억 추출 미들웨어
+│   ├── context_compaction.py  # 컨텍스트 압축
+│   ├── sanitize.py       # 서로게이트 문자 정리
+│   └── stall_detector.py # 에이전트 멈춤 감지/복구
+├── session/
+│   ├── manager.py        # 세션 생성/전환/영구 저장
+│   └── restore.py        # 세션 복원 (--resume)
+└── tools/
+    ├── git.py            # Git 도구 (안전 규칙)
+    ├── web_search.py     # Tavily 웹 검색
+    ├── fetch_url.py      # URL 가져오기
+    └── ask_user.py       # 사용자 질문
 ```
 
 ## 개발

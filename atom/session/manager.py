@@ -1,5 +1,7 @@
 """Session management — create, list, restore sessions."""
 import time
+import json
+from pathlib import Path
 from dataclasses import dataclass, field
 
 
@@ -13,16 +15,56 @@ class SessionInfo:
     description: str = ""
 
 
+# Persistent session index at ~/.atom/sessions.json
+_SESSION_INDEX_PATH = Path.home() / ".atom" / "sessions.json"
+
+
+def _load_session_index() -> dict[str, SessionInfo]:
+    """Load session metadata from disk."""
+    if not _SESSION_INDEX_PATH.exists():
+        return {}
+    try:
+        data = json.loads(_SESSION_INDEX_PATH.read_text(encoding="utf-8"))
+        return {
+            sid: SessionInfo(**info)
+            for sid, info in data.items()
+        }
+    except Exception:
+        return {}
+
+
+def _save_session_index(sessions: dict[str, SessionInfo]):
+    """Persist session metadata to disk."""
+    try:
+        _SESSION_INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            sid: {
+                "session_id": info.session_id,
+                "created_at": info.created_at,
+                "last_active": info.last_active,
+                "turn_count": info.turn_count,
+                "description": info.description,
+            }
+            for sid, info in sessions.items()
+        }
+        _SESSION_INDEX_PATH.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
 class SessionManager:
     """Manages session lifecycle with checkpointer-backed persistence.
 
-    In-memory index that tracks session metadata.
-    Actual state is stored by LangGraph's checkpointer (MemorySaver / PostgresSaver).
+    Session metadata is persisted to ~/.atom/sessions.json.
+    Actual state is stored by LangGraph's checkpointer (SqliteSaver).
     """
 
     def __init__(self, checkpointer=None):
         self._checkpointer = checkpointer
-        self._sessions: dict[str, SessionInfo] = {}
+        self._sessions: dict[str, SessionInfo] = _load_session_index()
 
     def create_session(self, session_id: str | None = None, description: str = "") -> SessionInfo:
         """Create a new session and return its info."""
@@ -36,6 +78,7 @@ class SessionManager:
             description=description,
         )
         self._sessions[session_id] = info
+        self._persist()
         return info
 
     def get_session(self, session_id: str) -> SessionInfo | None:
@@ -48,6 +91,7 @@ class SessionManager:
         if info:
             info.last_active = time.time()
             info.turn_count += 1
+            self._persist()
 
     def list_sessions(self) -> list[SessionInfo]:
         """List all sessions, most recent first."""
@@ -74,13 +118,16 @@ class SessionManager:
             config = self.get_invoke_config(session_id)
             state = agent.get_state(config)
             if state and state.values:
-                # Session exists in checkpointer — register it locally
                 if session_id not in self._sessions:
                     self.create_session(session_id, description="(restored)")
                 return True
         except Exception:
             pass
         return False
+
+    def _persist(self):
+        """Save session index to disk."""
+        _save_session_index(self._sessions)
 
     def get_pending_interrupts(self, agent, session_id: str) -> list | None:
         """Check if a session has pending interrupts (HITL approvals)."""

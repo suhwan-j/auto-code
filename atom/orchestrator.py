@@ -114,7 +114,7 @@ def _run_parallel(tasks: list[dict]) -> dict[str, str]:
         for future in as_completed(futures):
             label = futures[future]
             try:
-                results[label] = future.result(timeout=600)
+                results[label] = future.result(timeout=120)
             except Exception as e:
                 results[label] = f"Error: {e}"
             if _tracker:
@@ -131,9 +131,18 @@ def _stream_subagent(subagent, label: str, description: str) -> str:
     input_payload = {"messages": [{"role": "user", "content": description}]}
 
     last_content = ""
+    empty_turns = 0       # Consecutive AI messages with no tool calls
+    max_empty_turns = 5   # Bail out after this many empty turns
+    start_time = time.time()
+    max_wall_time = 90    # Hard wall-clock limit (seconds)
 
     try:
         for event in subagent.stream(input_payload, config=config, stream_mode="updates"):
+            # Wall-clock safety
+            if time.time() - start_time > max_wall_time:
+                last_content += "\n[Sub-agent timed out]"
+                break
+
             for node_name, node_output in event.items():
                 if not isinstance(node_output, dict):
                     continue
@@ -150,18 +159,29 @@ def _stream_subagent(subagent, label: str, description: str) -> str:
                     msg_type = getattr(msg, "type", None)
 
                     if msg_type == "ai":
+                        tool_calls = getattr(msg, "tool_calls", [])
                         # Report tool calls to tracker
-                        for tc in getattr(msg, "tool_calls", []):
+                        for tc in tool_calls:
                             tc_name = tc.get("name", "?")
                             tc_args = tc.get("args", {})
                             if _tracker:
                                 _tracker.on_subagent_tool(label, tc_name, tc_args)
+
+                        if tool_calls:
+                            empty_turns = 0
+                        else:
+                            empty_turns += 1
 
                         content = getattr(msg, "content", "")
                         if content:
                             text = content if isinstance(content, str) else str(content)
                             if text.strip():
                                 last_content = text
+
+            # Bail if model keeps producing text without tool calls
+            if empty_turns >= max_empty_turns:
+                last_content += "\n[Sub-agent stalled — no tool calls produced]"
+                break
 
     except Exception as e:
         last_content = f"Sub-agent error: {sanitize_text(str(e))}"

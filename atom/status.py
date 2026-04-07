@@ -71,8 +71,13 @@ class StatusTracker:
         self._panel_enabled: bool = True
         self.activity_log: list[str] = []  # Recent file operations
         self._max_log: int = 6
+        self._dirty: bool = True  # Only re-render when state changes
 
     # ─── Event handlers (thread-safe) ───
+
+    def _mark_dirty(self):
+        """Mark state as changed so next render() actually draws."""
+        self._dirty = True
 
     def on_todos_updated(self, todos_data: list[dict]):
         with self._lock:
@@ -85,12 +90,14 @@ class StatusTracker:
             ]
             if self.phase == "Initializing":
                 self.phase = "Planning"
+            self._mark_dirty()
 
     def on_tool_start(self, name: str, args: dict):
         with self._lock:
             self.tool_count += 1
             self.current_tool = name
             self.current_tool_args = _format_tool_summary(name, args)
+            self._mark_dirty()
 
         if name == "write_todos":
             self.on_todos_updated(args.get("todos", []))
@@ -105,11 +112,13 @@ class StatusTracker:
         if name == "orchestrate_tool":
             with self._lock:
                 self.phase = "Executing"
+                self._mark_dirty()
             return
 
         with self._lock:
             if self.phase in ("Initializing", "Planning"):
                 self.phase = "Executing"
+                self._mark_dirty()
 
     def on_tool_end(self, name: str, result_preview: str = ""):
         if name == "task":
@@ -122,6 +131,7 @@ class StatusTracker:
         with self._lock:
             self.current_tool = None
             self.current_tool_args = ""
+            self._mark_dirty()
 
     def on_subagent_start(self, name: str, description: str):
         with self._lock:
@@ -130,6 +140,7 @@ class StatusTracker:
                 description=description[:100],
             )
             self.phase = "Executing"
+            self._mark_dirty()
 
     def on_subagent_end(self, name: str):
         with self._lock:
@@ -138,6 +149,7 @@ class StatusTracker:
                 self.completed_subagents.append(info)
             self.current_tool = None
             self.current_tool_args = ""
+            self._mark_dirty()
 
     def on_subagent_tool(self, agent_name: str, tool_name: str, tool_args: dict):
         """Called from subagent worker threads when a tool is invoked."""
@@ -161,6 +173,7 @@ class StatusTracker:
                 self.activity_log.append(f"$ {agent_name}: {cmd}")
                 if len(self.activity_log) > self._max_log:
                     self.activity_log.pop(0)
+            self._mark_dirty()
 
     def advance_plan(self):
         """Mark the next pending/in_progress todo as completed. Called by orchestrator."""
@@ -168,6 +181,7 @@ class StatusTracker:
             for todo in self.todos:
                 if todo.status in ("pending", "in_progress"):
                     todo.status = "completed"
+                    self._mark_dirty()
                     return True
             return False
 
@@ -176,6 +190,7 @@ class StatusTracker:
         with self._lock:
             if 0 <= index < len(self.todos):
                 self.todos[index].status = "in_progress"
+                self._mark_dirty()
 
     # ─── Rendering (called from render thread or main thread) ───
 
@@ -183,22 +198,31 @@ class StatusTracker:
         if not self._panel_enabled:
             return
         with self._lock:
+            if not self._dirty:
+                return
+            self._dirty = False
+
             self._clear_previous()
             lines = self._build_panel()
             output = "\n".join(lines)
+            # Use stdout (same stream as AI text) so ANSI cursor math stays consistent
+            sys.stdout.flush()
             try:
-                print(output, file=sys.stderr, flush=True)
+                sys.stdout.write(output + "\n")
+                sys.stdout.flush()
             except UnicodeEncodeError:
-                print(sanitize_text(output), file=sys.stderr, flush=True)
+                sys.stdout.write(sanitize_text(output) + "\n")
+                sys.stdout.flush()
             self._last_panel_lines = len(lines)
 
     def _clear_previous(self):
         if self._last_panel_lines > 0:
-            sys.stderr.write(f"{_ESC}{self._last_panel_lines}A")
+            # Move cursor up, erase each line, move cursor back up — all on stdout
+            sys.stdout.write(f"{_ESC}{self._last_panel_lines}A")
             for _ in range(self._last_panel_lines):
-                sys.stderr.write(f"{_ESC}2K\n")
-            sys.stderr.write(f"{_ESC}{self._last_panel_lines}A")
-            sys.stderr.flush()
+                sys.stdout.write(f"{_ESC}2K\n")
+            sys.stdout.write(f"{_ESC}{self._last_panel_lines}A")
+            sys.stdout.flush()
 
     def _build_panel(self) -> list[str]:
         width = min(shutil.get_terminal_size().columns - 2, 72)
@@ -305,7 +329,7 @@ class StatusTracker:
 
         summary = " · ".join(parts)
         line = f"{_DIM}── {_CYAN}Done{_DIM} ({summary}) {'─' * max(0, width - len(summary) - 12)}{_RESET}"
-        print(line, file=sys.stderr, flush=True)
+        print(line, flush=True)
 
 
 def _format_tool_summary(name: str, args: dict) -> str:

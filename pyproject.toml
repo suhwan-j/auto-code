@@ -14,10 +14,15 @@ dependencies = [
     "httpx>=0.27",
     "pydantic>=2.0",
     "python-dotenv>=1.0",
+    "prompt_toolkit>=3.0",
+    "langgraph-checkpoint-sqlite>=3.0",
 ]
 
 [project.scripts]
 atom = "atom.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["atom*"]
 
 [build-system]
 requires = ["setuptools>=64"]

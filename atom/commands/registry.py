@@ -4,6 +4,7 @@ import time
 # These are injected by CLI after agent creation
 _session_manager = None
 _auto_dream = None
+_agent_config = None  # AgentConfig instance for /model
 
 
 def set_session_manager(manager):
@@ -18,6 +19,34 @@ def set_auto_dream(extractor):
     _auto_dream = extractor
 
 
+def set_agent_config(config):
+    """Inject AgentConfig for /model command."""
+    global _agent_config
+    _agent_config = config
+
+
+# Command metadata for autocomplete and menu
+COMMAND_LIST = [
+    ("/help",     "Show help message"),
+    ("/model",    "Show or switch model"),
+    ("/mode",     "Cycle mode (default → auto-approve → plan-only)"),
+    ("/new",      "Start a new session (e.g. /new fix login bug)"),
+    ("/clear",    "Same as /new"),
+    ("/session",  "Show/switch session (e.g. /session 2)"),
+    ("/sessions", "List all sessions with numbers"),
+    ("/compact",  "Force context compaction"),
+    ("/memory",   "Show/clear memories"),
+    ("/tasks",    "Show active sub-agent tasks"),
+    ("/status",   "Show agent status"),
+    ("/exit",     "Exit the CLI"),
+]
+
+
+def get_command_names() -> list[str]:
+    """Return list of command names for autocomplete."""
+    return [cmd for cmd, _ in COMMAND_LIST]
+
+
 def handle_slash_command(user_input: str, agent, invoke_config: dict) -> str | None:
     """Parse and execute a slash command. Returns output string, '__exit__', or None."""
     parts = user_input.strip().split(maxsplit=1)
@@ -28,7 +57,8 @@ def handle_slash_command(user_input: str, agent, invoke_config: dict) -> str | N
         "/help": _cmd_help,
         "/exit": _cmd_exit,
         "/quit": _cmd_exit,
-        "/clear": _cmd_clear,
+        "/new": _cmd_new,
+        "/clear": _cmd_new,
         "/model": _cmd_model,
         "/session": _cmd_session,
         "/sessions": _cmd_sessions,
@@ -52,10 +82,13 @@ def _cmd_help(args, agent, config) -> str:
   /help              Show this help message
   /exit              Exit the CLI
   /mode              Cycle mode (default → auto-approve → plan-only)
-  /clear             Clear conversation (start new session)
+  /new [description] Start a new session (e.g. /new fix login bug)
+  /clear             Same as /new
   /model             Show current model info
-  /session           Show current session ID
-  /sessions          List all sessions
+  /model <name>      Switch to a different model (e.g. /model claude-haiku-4-5)
+  /session           Show current session info
+  /session <id|#>    Switch to another session (e.g. /session 2)
+  /sessions          List all sessions with numbers
   /compact           Force context compaction
   /memory            Show extracted memories
   /memory clear      Clear all memories
@@ -69,27 +102,53 @@ def _cmd_exit(args, agent, config) -> str:
     return "__exit__"
 
 
-def _cmd_clear(args, agent, config) -> str:
-    new_session = f"session-{int(time.time())}"
-    config["configurable"]["thread_id"] = new_session
+def _cmd_new(args, agent, config) -> str:
+    description = args.strip()
+    new_session_id = f"session-{int(time.time())}"
+    config["configurable"]["thread_id"] = new_session_id
     if _session_manager:
-        _session_manager.create_session(new_session)
-    return f"Conversation cleared. New session: {new_session}"
+        _session_manager.create_session(new_session_id, description=description)
+    desc = f" — {description}" if description else ""
+    return f"\033[1;32mNew session:\033[0m {new_session_id}{desc}"
 
 
 def _cmd_model(args, agent, config) -> str:
-    # Try to extract model info from the agent
-    model_info = "unknown"
-    try:
-        # CompiledStateGraph doesn't directly expose model, but we can check config
-        if hasattr(agent, "config") and agent.config:
-            model_info = str(agent.config.get("model", "unknown"))
-    except Exception:
-        pass
-    return f"Current model: {model_info}"
+    model_name = _agent_config.model if _agent_config else "unknown"
+    provider = _agent_config.provider if _agent_config else "unknown"
+
+    if not args.strip():
+        # No argument — show current model and available shortcuts
+        lines = [
+            f"\033[1mCurrent model:\033[0m {model_name}",
+            f"\033[1mProvider:\033[0m {provider}",
+            "",
+            "\033[0;90mUsage: /model <model-name> [provider]\033[0m",
+            "\033[0;90mExamples:\033[0m",
+            "\033[0;90m  /model anthropic/claude-sonnet-4-5\033[0m",
+            "\033[0;90m  /model Qwen/Qwen3-32B vllm\033[0m",
+            "\033[0;90m  /model claude-haiku-4-5 anthropic\033[0m",
+        ]
+        return "\n".join(lines)
+
+    # Parse: /model <model_name> [provider]
+    parts = args.strip().split()
+    new_model = parts[0]
+    new_provider = parts[1] if len(parts) > 1 else None
+
+    # Return sentinel for interactive loop to handle agent rebuild
+    if new_provider:
+        return f"__model_change__:{new_model}:{new_provider}"
+    return f"__model_change__:{new_model}"
 
 
 def _cmd_session(args, agent, config) -> str:
+    arg = args.strip()
+
+    # /session <id_or_number> → switch session
+    if arg:
+        return _switch_session(arg, agent, config)
+
+    # /session (no args) → show current session info
     session_id = config["configurable"]["thread_id"]
     info_lines = [f"Session ID: {session_id}"]
 
@@ -108,13 +167,89 @@ def _cmd_session(args, agent, config) -> str:
     except Exception:
         pass
 
+    info_lines.append("")
+    info_lines.append("\033[0;90mUsage: /session <id_or_number> to switch\033[0m")
+    info_lines.append("\033[0;90m       /sessions to list all sessions\033[0m")
+
     return "\n".join(info_lines)
+
+
+def _switch_session(target: str, agent, config) -> str:
+    """Switch to another session by ID or list number."""
+    if _session_manager is None:
+        return "Session manager not available."
+
+    current_id = config["configurable"]["thread_id"]
+    sessions = _session_manager.list_sessions()
+
+    target_session = None
+
+    # Try as a list number (1-based)
+    try:
+        idx = int(target) - 1
+        if 0 <= idx < len(sessions):
+            target_session = sessions[idx]
+    except ValueError:
+        pass
+
+    # Try as session ID (exact or prefix match)
+    if target_session is None:
+        for s in sessions:
+            if s.session_id == target:
+                target_session = s
+                break
+        if target_session is None:
+            matches = [s for s in sessions if target in s.session_id]
+            if len(matches) == 1:
+                target_session = matches[0]
+            elif len(matches) > 1:
+                ids = ", ".join(s.session_id for s in matches[:5])
+                return f"Ambiguous — multiple matches: {ids}"
+
+    if target_session is None:
+        return f"Session not found: {target}. Use /sessions to list available sessions."
+
+    if target_session.session_id == current_id:
+        return f"Already on session: {current_id}"
+
+    # Verify state exists in checkpointer
+    target_config = _session_manager.get_invoke_config(target_session.session_id)
+    try:
+        state = agent.get_state(target_config)
+        msg_count = len(state.values.get("messages", [])) if state and state.values else 0
+    except Exception:
+        msg_count = 0
+
+    # Switch
+    config["configurable"]["thread_id"] = target_session.session_id
+
+    desc = f" — {target_session.description}" if target_session.description else ""
+    return (
+        f"\033[1;32mSwitched to session:\033[0m {target_session.session_id}{desc}\n"
+        f"  Turns: {target_session.turn_count} · Messages: {msg_count}"
+    )
 
 
 def _cmd_sessions(args, agent, config) -> str:
     if _session_manager is None:
         return "Session manager not available."
-    return _session_manager.format_session_list()
+
+    sessions = _session_manager.list_sessions()
+    if not sessions:
+        return "No sessions found."
+
+    current_id = config["configurable"]["thread_id"]
+    lines = ["\033[1mSessions:\033[0m  \033[0;90m(use /session <number> to switch)\033[0m"]
+    for i, s in enumerate(sessions, 1):
+        age = _format_age(time.time() - s.created_at)
+        active = _format_age(time.time() - s.last_active)
+        desc = f" — {s.description}" if s.description else ""
+        marker = " \033[1;36m◀ current\033[0m" if s.session_id == current_id else ""
+        lines.append(
+            f"  \033[1;33m{i:>2}\033[0m) {s.session_id}  "
+            f"({s.turn_count} turns, {age} ago){desc}{marker}"
+        )
+    return "\n".join(lines)
 
 
 def _cmd_compact(args, agent, config) -> str:

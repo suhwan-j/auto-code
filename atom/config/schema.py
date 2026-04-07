@@ -48,6 +48,7 @@ class SandboxConfig(BaseModel):
 class AgentConfig(BaseModel):
     model: str = "claude-sonnet-4-5-20250929"
     fallback_model: str = "claude-haiku-4-5-20251001"
+    provider: Literal["auto", "openrouter", "anthropic", "openai", "vllm"] = "auto"
     project_root: str = "."
     permissions: PermissionConfig = Field(default_factory=PermissionConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)

@@ -45,4 +45,17 @@ def create_lightweight_model(model_name: str = "claude-haiku-4-5-20251001"):
         except Exception:
             pass
 
+    vllm_base = os.environ.get("VLLM_BASE_URL")
+    if vllm_base:
+        try:
+            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(
+                model=model_name,
+                openai_api_key=os.environ.get("VLLM_API_KEY", "EMPTY"),
+                openai_api_base=vllm_base,
+                max_tokens=1024,
+            )
+        except Exception:
+            pass
+
     return None
