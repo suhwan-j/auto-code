@@ -33,6 +33,38 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub('', text)
 
 
+def _wcwidth(ch: str) -> int:
+    """Return display width of a character (2 for CJK, 1 for others)."""
+    cp = ord(ch)
+    # CJK Unified Ideographs, Hangul Syllables, fullwidth forms, etc.
+    if (0x1100 <= cp <= 0x115F or   # Hangul Jamo
+        0x2E80 <= cp <= 0x9FFF or   # CJK radicals, unified ideographs
+        0xAC00 <= cp <= 0xD7AF or   # Hangul Syllables
+        0xF900 <= cp <= 0xFAFF or   # CJK Compatibility Ideographs
+        0xFE10 <= cp <= 0xFE6F or   # CJK forms
+        0xFF01 <= cp <= 0xFF60 or   # Fullwidth forms
+        0xFFE0 <= cp <= 0xFFE6 or   # Fullwidth signs
+        0x20000 <= cp <= 0x2FA1F):  # CJK Extension B+
+        return 2
+    return 1
+
+
+def _wcswidth(text: str) -> int:
+    """Return total display width of a string."""
+    return sum(_wcwidth(ch) for ch in text)
+
+
+def _truncate_to_width(text: str, max_width: int) -> str:
+    """Truncate string to fit within max_width display columns."""
+    w = 0
+    for i, ch in enumerate(text):
+        cw = _wcwidth(ch)
+        if w + cw > max_width:
+            return text[:i]
+        w += cw
+    return text
+
+
 class SplitPaneTUI:
     """Split-pane TUI using curses. Left=dashboard, Right=subagent detail."""
 
@@ -67,7 +99,7 @@ class SplitPaneTUI:
         stdscr.timeout(300)
 
         h, w = stdscr.getmaxyx()
-        self._div_col = int(w * 0.55)
+        self._div_col = int(w * 0.5)
 
         self._left_win = curses.newwin(h, self._div_col, 0, 0)
         self._right_win = curses.newwin(h, w - self._div_col - 1, 0, self._div_col + 1)
@@ -106,11 +138,12 @@ class SplitPaneTUI:
         self._running = False
 
     def _render_divider(self, height: int):
-        """Draw vertical divider line."""
+        """Draw vertical divider as subtle dotted line."""
         for row in range(height):
             try:
-                self._stdscr.addch(row, self._div_col, curses.ACS_VLINE,
-                                   curses.color_pair(_PAIR_DIM))
+                ch = "┊" if row % 2 == 0 else " "
+                self._stdscr.addstr(row, self._div_col, ch,
+                                    curses.color_pair(_PAIR_DIM) | curses.A_DIM)
             except curses.error:
                 pass
 
@@ -143,7 +176,7 @@ class SplitPaneTUI:
         row = 1
 
         # Separator
-        self._waddstr(win, row, 0, "─" * w, _PAIR_DIM)
+        self._waddstr(win, row, 0, "┈" * w, _PAIR_DIM)
         row += 1
 
         # Plan progress
@@ -160,15 +193,16 @@ class SplitPaneTUI:
             for todo in self.tracker.todos[:8]:
                 if row >= height - 2:
                     break
+                content = _truncate_to_width(todo.content, w - 8)
                 if todo.status == "completed":
                     self._waddstr(win, row, 3, "✓ ", _PAIR_GREEN)
-                    self._waddstr(win, row, 5, todo.content[:w - 8], _PAIR_DIM)
+                    self._waddstr(win, row, 5, content, _PAIR_DIM)
                 elif todo.status == "in_progress":
                     self._waddstr(win, row, 3, "▸ ", _PAIR_YELLOW)
-                    self._waddstr(win, row, 5, todo.content[:w - 8], _PAIR_BOLD_WHITE)
+                    self._waddstr(win, row, 5, content, _PAIR_BOLD_WHITE)
                 else:
                     self._waddstr(win, row, 3, "○ ", _PAIR_DIM)
-                    self._waddstr(win, row, 5, todo.content[:w - 8], _PAIR_DIM)
+                    self._waddstr(win, row, 5, content, _PAIR_DIM)
                 row += 1
 
         # Subagent tree
@@ -213,7 +247,7 @@ class SplitPaneTUI:
         win.noutrefresh()
 
     def _render_right(self, height: int):
-        """Render subagent detail panels on right pane."""
+        """Render subagent detail panels on right pane, each getting 1/N of the height."""
         win = self._right_win
         win.erase()
         _, w = win.getmaxyx()
@@ -223,12 +257,17 @@ class SplitPaneTUI:
             win.noutrefresh()
             return
 
-        row = 0
-        pane_height = max(4, (height - 1) // max(len(panes), 1))
+        n = len(panes)
+        pane_height = max(3, height // n)  # each pane gets 1/N of total height
 
-        for pane in panes:
-            if row >= height - 1:
+        for idx, pane in enumerate(panes):
+            # Fixed region for this pane: [start_row, end_row)
+            start_row = idx * pane_height
+            end_row = (idx + 1) * pane_height if idx < n - 1 else height  # last pane gets remainder
+            if start_row >= height - 1:
                 break
+
+            row = start_row
 
             # Header
             elapsed = pane.elapsed
@@ -246,41 +285,46 @@ class SplitPaneTUI:
             self._waddstr(win, row, 3 + len(pane.label), stats, _PAIR_DIM)
             row += 1
 
-            # Output lines
-            visible_lines = pane.recent_lines[-(pane_height - 2):]
+            # Current tool indicator
+            if pane.current_tool and row < end_row - 1:
+                self._waddstr(win, row, 2, f"⚡ {pane.current_tool}"[:w - 3], _PAIR_YELLOW)
+                row += 1
+
+            # Output lines — fill remaining space in this pane's region
+            content_rows = end_row - row - 1  # -1 for separator
+            visible_lines = pane.recent_lines[-max(1, content_rows):]
             for line in visible_lines:
-                if row >= height - 1:
+                if row >= end_row - 1:
                     break
-                clean = _strip_ansi(line)[:w - 2]
+                clean = _truncate_to_width(_strip_ansi(line), w - 3)
 
                 # Color based on content
                 if clean.startswith("●") or clean.startswith("▸"):
                     self._waddstr(win, row, 2, clean, _PAIR_CYAN)
-                elif clean.startswith("+") or clean.startswith("  ⎿"):
+                elif clean.startswith("  ⎿"):
+                    self._waddstr(win, row, 2, clean, _PAIR_DIM)
+                elif clean.startswith("+"):
                     self._waddstr(win, row, 2, clean, _PAIR_GREEN)
-                elif clean.startswith("-"):
-                    self._waddstr(win, row, 2, clean, _PAIR_RED)
-                elif "error" in clean.lower()[:30]:
+                elif clean.startswith("✗") or "error" in clean.lower()[:30]:
                     self._waddstr(win, row, 2, clean, _PAIR_RED)
                 else:
                     self._waddstr(win, row, 2, clean, _PAIR_DIM)
                 row += 1
 
-            # Separator
-            if row < height - 1:
-                self._waddstr(win, row, 0, "─" * (w - 1), _PAIR_DIM)
-                row += 1
+            # Separator between panes (not after last)
+            if idx < n - 1 and end_row - 1 < height:
+                self._waddstr(win, end_row - 1, 0, "┈" * (w - 1), _PAIR_DIM)
 
         win.noutrefresh()
 
     @staticmethod
     def _waddstr(win, row: int, col: int, text: str, pair: int, bold: bool = False):
-        """Safe addstr with color."""
+        """Safe addstr with color, CJK-aware width truncation."""
         try:
             h, w = win.getmaxyx()
             if row >= h or col >= w:
                 return
-            text = text[:w - col - 1]  # prevent overflow
+            text = _truncate_to_width(text, w - col - 1)
             attr = curses.color_pair(pair)
             if bold:
                 attr |= curses.A_BOLD

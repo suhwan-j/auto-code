@@ -8,7 +8,7 @@ Architecture:
     → Event collector thread reads Queue → updates PaneManager + StatusTracker
     → All workers complete → combined results returned to main agent
 
-  Meanwhile, RenderThread refreshes the split-pane dashboard.
+  The curses SplitPaneTUI handles rendering during orchestration.
 """
 import os
 import time
@@ -53,21 +53,20 @@ def set_pane_manager(pane_manager: PaneManager | None):
 
 @tool
 def orchestrate_tool(tasks_json: str) -> str:
-    """Run multiple sub-agent tasks in PARALLEL. Use this instead of sequential task calls.
+    """Run multiple Atom task agents in PARALLEL. Use this instead of sequential task calls.
 
-    Each task runs as an independent sub-agent with its own context.
+    Each task spawns an independent Atom agent with full tool access and skills.
     All tasks execute concurrently and their results are combined.
 
     Args:
         tasks_json: JSON array of task objects. Each object has:
-            - "type": sub-agent type ("coder", "researcher", "explorer", "reviewer", "planner")
-            - "task": detailed description of what the sub-agent should do
+            - "task": detailed description of what the Atom agent should do
 
     Example:
         orchestrate_tool('[
-            {"type": "coder", "task": "Create index.html with React setup and Vite config"},
-            {"type": "coder", "task": "Create src/App.tsx with fibonacci dashboard component"},
-            {"type": "coder", "task": "Create api/fibonacci.ts serverless function"}
+            {"task": "Create index.html with React setup and Vite config"},
+            {"task": "Create src/App.tsx with fibonacci dashboard component"},
+            {"task": "Create api/fibonacci.ts serverless function"}
         ]')
     """
     try:
@@ -124,14 +123,14 @@ def _run_parallel(tasks: list[dict]) -> dict[str, SubagentResult | str]:
     result_holders: dict[str, mp.Queue] = {}
 
     for i, task in enumerate(tasks):
-        agent_type = task.get("type", "coder")
+        agent_type = task.get("type", "coder")  # type hint preserved for backwards compat
         description = task.get("task", task.get("description", ""))
-        label = f"{agent_type}-{i}"
+        label = f"atom-{i}"
 
-        cfg = config_map.get(agent_type)
+        # All tasks use the unified atom task agent config
+        cfg = config_map.get(agent_type) or config_map.get("coder")
         if cfg is None:
-            results[label] = f"Unknown sub-agent type: {agent_type}"
-            continue
+            cfg = {"name": "atom", "system_prompt": TASK_AGENT_PROMPT, "description": ""}
 
         if _tracker:
             _tracker.on_subagent_start(label, description)
@@ -172,7 +171,7 @@ def _run_parallel(tasks: list[dict]) -> dict[str, SubagentResult | str]:
     # Wait for processes to finish (they may already be done after curses exits)
     for label, p in processes.items():
         if p.is_alive():
-            p.join(timeout=30)
+            p.join(timeout=60)
 
         try:
             result = result_holders[label].get_nowait()
@@ -188,10 +187,15 @@ def _run_parallel(tasks: list[dict]) -> dict[str, SubagentResult | str]:
         if _pane_manager:
             _pane_manager.complete_subagent(label)
 
-    # Cleanup
+    # Cleanup — terminate stragglers and reap to prevent zombies
     for p in processes.values():
         if p.is_alive():
             p.terminate()
+    for p in processes.values():
+        p.join(timeout=5)  # reap zombie processes
+        if p.is_alive():
+            p.kill()
+            p.join(timeout=2)
     collector_halt.set()
     collector.join(timeout=2)
 
@@ -228,6 +232,20 @@ def _worker_process(
         result_queue.put(SubagentResult(final_text=f"Process error: {e}"))
 
 
+TASK_AGENT_PROMPT = """You are Atom, a task-focused coding agent. You execute a single assigned task directly and efficiently.
+
+## Rules
+- Execute the given task immediately — do NOT plan, do NOT create todos, do NOT delegate.
+- Write files directly. Do NOT read existing files unless you absolutely must edit them.
+- Use write_file to create new files, edit_file for targeted modifications.
+- Use execute to run shell commands only when necessary (install packages, build).
+- Be concise — report what you did in one sentence when done.
+- Do NOT verify, review, or double-check your own work. Just write the files and finish.
+- Do NOT read files you just created. Do NOT list directories after creating files.
+- STOP as soon as your assigned task is complete. Do not do extra work.
+"""
+
+
 def _run_subagent_in_process(
     subagent_cfg: dict,
     description: str,
@@ -236,9 +254,12 @@ def _run_subagent_in_process(
     project_root: str,
     event_queue: mp.Queue,
 ) -> SubagentResult:
-    """Rebuild graph and stream subagent in child process."""
-    # Rebuild LLM and graph in this process
-    from atom.core.agent import _resolve_model, SUBAGENT_CONFIGS
+    """Rebuild graph and stream subagent in child process.
+
+    Each subagent is a full Atom task agent (create_deep_agent) with skills,
+    but without the orchestration layer (no planning, no sub-delegation).
+    """
+    from atom.core.agent import _resolve_model
     from deepagents import create_deep_agent
     from deepagents.backends import LocalShellBackend
     from atom.layers.sanitize import SanitizeMiddleware
@@ -247,24 +268,18 @@ def _run_subagent_in_process(
 
     model = _resolve_model(model_config["model_name"], model_config["provider"])
 
-    # Determine tools for this subagent type
-    extra_tools = []
-    if subagent_cfg["name"] == "researcher":
-        from atom.tools.fetch_url import fetch_url_tool
-        extra_tools = [fetch_url_tool]
-        if os.environ.get("TAVILY_API_KEY"):
-            from atom.tools.web_search import web_search_tool
-            extra_tools.insert(0, web_search_tool)
-
     subagent = create_deep_agent(
+        name="atom-task",
         model=model,
-        system_prompt=subagent_cfg["system_prompt"],
-        tools=extra_tools,
+        system_prompt=TASK_AGENT_PROMPT,
+        tools=[],  # backend provides file I/O + shell; no extra tools needed
         backend=LocalShellBackend(
             root_dir=project_root,
             virtual_mode=False,
             inherit_env=True,
         ),
+        # Auto-approve everything — main agent already approved the orchestration
+        interrupt_on=None,
         checkpointer=MemorySaver(),
         middleware=[
             SanitizeMiddleware(),
@@ -280,9 +295,9 @@ def _run_subagent_in_process(
     result = SubagentResult()
     pending_ops: dict[str, dict] = {}
     empty_turns = 0
-    max_empty_turns = 5
+    max_empty_turns = 3
     start_time = time.time()
-    max_wall_time = 90
+    max_wall_time = 120
 
     def emit(event_type: str, **data):
         try:
@@ -318,7 +333,9 @@ def _run_subagent_in_process(
                         for tc in tool_calls:
                             tc_name = tc.get("name", "?")
                             tc_args = tc.get("args", {})
-                            emit("tool_start", name=tc_name)
+                            # Emit verbose tool info: name + key arg summary
+                            tool_summary = _format_tool_brief(tc_name, tc_args)
+                            emit("tool_start", name=tc_name, summary=tool_summary)
                             result.tools_used.append({"name": tc_name})
 
                             if tc_name in ("edit_file", "write_file"):
@@ -339,7 +356,7 @@ def _run_subagent_in_process(
                             text = content if isinstance(content, str) else str(content)
                             if text.strip():
                                 result.final_text = text
-                                emit("ai_text", text=text[:200])
+                                emit("ai_text", text=text[:500])
 
                     elif msg_type == "tool":
                         tool_call_id = getattr(msg, "tool_call_id", None)
@@ -347,7 +364,10 @@ def _run_subagent_in_process(
                         tool_name = getattr(msg, "name", "tool")
                         is_error = "error" in tool_content.lower()[:100]
 
-                        emit("tool_end", name=tool_name, is_error=is_error)
+                        # Emit verbose result preview
+                        result_preview = tool_content[:200].replace("\n", " ")
+                        emit("tool_end", name=tool_name, is_error=is_error,
+                             result=result_preview)
 
                         if tool_name in ("write_file", "edit_file") and not is_error:
                             if tool_call_id and tool_call_id in pending_ops:
@@ -366,6 +386,24 @@ def _run_subagent_in_process(
         emit("error", text=str(e)[:100])
 
     return result
+
+
+def _format_tool_brief(name: str, args: dict) -> str:
+    """Format a short summary of tool call for verbose display."""
+    if name in ("write_file", "edit_file", "read_file"):
+        path = args.get("file_path", args.get("path", ""))
+        short = os.path.basename(path) if path else "?"
+        return f"{name}({short})"
+    if name == "execute":
+        cmd = args.get("command", "")[:60]
+        return f"$ {cmd}"
+    if name in ("ls", "glob"):
+        return f"{name}({args.get('path', args.get('pattern', ''))[:40]})"
+    if name == "grep":
+        return f"grep({args.get('pattern', '')[:30]})"
+    if name in ("web_search_tool", "fetch_url_tool"):
+        return f"{name}({args.get('query', args.get('url', ''))[:40]})"
+    return name
 
 
 # ─── Event collector (runs in parent process, main thread) ───

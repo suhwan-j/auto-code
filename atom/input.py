@@ -92,6 +92,11 @@ class InputHandler:
             handler_ref.cycle_mode()
             event.app.invalidate()  # force redraw with new toolbar/prompt
 
+        @self._bindings.add("c-j")
+        def _ctrl_j(event):
+            """Ctrl+J: insert newline for multiline input."""
+            event.current_buffer.insert_text("\n")
+
         self._session = PromptSession(
             completer=SlashCompleter(),
             key_bindings=self._bindings,

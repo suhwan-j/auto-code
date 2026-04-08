@@ -79,15 +79,24 @@ class PaneManager:
                 text = event.data.get("text", "")
                 for line in text.splitlines():
                     if line.strip():
-                        pane.append(line.strip()[:80])
+                        pane.append(line.strip()[:120])
 
             elif event.event_type == "tool_start":
-                name = event.data.get("name", "?")
-                pane.current_tool = name
-                pane.append(f"▸ {name}")
+                summary = event.data.get("summary", event.data.get("name", "?"))
+                pane.current_tool = summary
+                pane.append(f"▸ {summary}")
 
             elif event.event_type == "tool_end":
                 pane.tool_count += 1
+                name = event.data.get("name", "")
+                result_text = event.data.get("result", "")
+                is_error = event.data.get("is_error", False)
+                # Show result preview for verbose insight
+                if is_error and result_text:
+                    pane.append(f"✗ {name}: {result_text[:80]}")
+                elif result_text and name not in ("write_file", "edit_file"):
+                    # Show short result for non-file tools
+                    pane.append(f"  ⎿ {result_text[:80]}")
                 pane.current_tool = ""
 
             elif event.event_type == "diff":

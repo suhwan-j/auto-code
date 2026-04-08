@@ -8,6 +8,7 @@ atom/hotkey.py
 atom/input.py
 atom/orchestrator.py
 atom/pane.py
+atom/skills.py
 atom/status.py
 atom/tui.py
 atom/utils.py
