@@ -92,5 +92,14 @@ class ContextCompactionMiddleware(AgentMiddleware):
         messages = state.get("messages", []) if isinstance(state, dict) else getattr(state, "messages", [])
         compacted = self._compactor.check_and_compact(messages, self._context_window)
         if compacted is not None:
+            import sys
+            original = len(messages)
+            new = len(compacted)
+            ratio = _estimate_tokens(messages) / self._context_window * 100
+            print(
+                f"\033[38;2;96;80;58m  [auto-compact] {original} → {new} messages "
+                f"(context was {ratio:.0f}% full)\033[0m",
+                file=sys.stderr, flush=True,
+            )
             return {"messages": compacted}
         return None
