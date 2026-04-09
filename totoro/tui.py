@@ -181,7 +181,7 @@ class SplitPaneTUI:
         # Header
         prefix = "── "
         title = "◈ Totoro "
-        row = self._waddstr(win, row, 0, prefix, _PAIR_DIM)
+        self._waddstr(win, row, 0, prefix, _PAIR_DIM)
         title_col = _wcswidth(prefix)
         self._waddstr(win, 0, title_col, title, _PAIR_CYAN, bold=True)
         phase = self.tracker.phase
