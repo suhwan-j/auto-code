@@ -438,9 +438,34 @@ class StatusTracker:
         if total_tokens > 0:
             parts.append(_format_tokens(total_tokens))
 
+        # Accumulate into session-level counter
+        accumulate_session_tokens(
+            self.token_input + sum(p.token_input for p in (self._pane_manager.get_panes() if self._pane_manager else [])),
+            self.token_output + sum(p.token_output for p in (self._pane_manager.get_panes() if self._pane_manager else [])),
+        )
+
         summary = " · ".join(parts)
         line = f"{_DIM}── {_CYAN}Done{_DIM} ({summary}) {'─' * max(0, width - len(summary) - 12)}{_RESET}"
         print(line, flush=True)
+
+
+# ─── Session-level token accumulator ───
+# Persists across turns (StatusTracker is recreated each turn)
+_session_tokens = {"input": 0, "output": 0}
+
+
+def get_session_tokens() -> dict:
+    return _session_tokens.copy()
+
+
+def accumulate_session_tokens(input_tokens: int, output_tokens: int):
+    _session_tokens["input"] += input_tokens
+    _session_tokens["output"] += output_tokens
+
+
+def reset_session_tokens():
+    _session_tokens["input"] = 0
+    _session_tokens["output"] = 0
 
 
 def _format_tokens(total: int) -> str:

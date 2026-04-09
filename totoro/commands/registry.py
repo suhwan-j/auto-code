@@ -118,6 +118,8 @@ def _cmd_exit(args, agent, config) -> str:
 
 
 def _cmd_new(args, agent, config) -> str:
+    from totoro.status import reset_session_tokens
+    reset_session_tokens()
     description = args.strip()
     new_session_id = f"session-{int(time.time())}"
     config["configurable"]["thread_id"] = new_session_id
@@ -467,7 +469,7 @@ def _cmd_status(args, agent, config) -> str:
             ai_msgs = sum(1 for m in messages if getattr(m, "type", None) == "ai")
             tool_msgs = sum(1 for m in messages if getattr(m, "type", None) == "tool")
             lines.append(f"  Messages: {len(messages)} (human: {human_msgs}, ai: {ai_msgs}, tool: {tool_msgs})")
-            lines.append(f"  Est. tokens: ~{token_est:,}")
+            lines.append(f"  Est. context tokens: ~{token_est:,}")
             # Context usage percentage (assuming 200k window)
             context_window = 200_000
             usage_pct = (token_est / context_window) * 100
@@ -477,6 +479,13 @@ def _cmd_status(args, agent, config) -> str:
             lines.append(f"  Context: [{bar}] {usage_pct:.1f}%")
     except Exception:
         lines.append("  Messages: (unable to read state)")
+
+    # Session-level API token usage
+    from totoro.status import get_session_tokens
+    session_tok = get_session_tokens()
+    api_total = session_tok["input"] + session_tok["output"]
+    if api_total > 0:
+        lines.append(f"  API tokens: {api_total:,} (in: {session_tok['input']:,}, out: {session_tok['output']:,})")
 
     # Memory count
     if _auto_dream:
