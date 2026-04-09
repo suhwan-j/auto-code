@@ -29,6 +29,7 @@ _model_config: dict = {}             # {model_name, provider} for rebuilding in 
 _project_root: str = "."
 _tracker = None
 _pane_manager: PaneManager | None = None
+_plan_only: bool = False             # When True, catbus plans but does NOT auto-dispatch
 
 
 def register_subagent_configs(configs: list[dict], model_name: str, provider: str, project_root: str):
@@ -49,12 +50,20 @@ def set_pane_manager(pane_manager: PaneManager | None):
     _pane_manager = pane_manager
 
 
+def set_plan_only(enabled: bool):
+    global _plan_only
+    _plan_only = enabled
+
+
 # ─── Orchestrate tool ───
 
 @tool
 def orchestrate_tool(tasks_json: str) -> str:
     """Run sub-agents in parallel. Input: JSON array of {"type": "<agent>", "task": "<description>"}.
     Types: catbus (plan), satsuki (code), mei (research), susuwatari (micro), tatsuo (review).
+
+    If the only task is a catbus (planner), the plan is automatically executed:
+    catbus returns a plan → execution agents are dispatched → results are returned.
 
     Args:
         tasks_json: JSON array, e.g. '[{"type":"satsuki","task":"Create index.html"}]'
@@ -67,11 +76,20 @@ def orchestrate_tool(tasks_json: str) -> str:
     if not isinstance(tasks, list) or not tasks:
         return "Error: tasks must be a non-empty JSON array."
 
+    # ── Auto-dispatch: if only catbus tasks, run plan → execute automatically ──
+    # Skip auto-dispatch in plan-only mode (user only wants the plan)
+    catbus_only = all(t.get("type", "") == "catbus" for t in tasks)
+    if catbus_only and not _plan_only:
+        return _orchestrate_with_auto_dispatch(tasks)
+
+    return _run_and_format(tasks)
+
+
+def _run_and_format(tasks: list[dict]) -> str:
+    """Run tasks in parallel and format results."""
     results = _run_parallel(tasks)
 
-    # Shorter limits to save context for small-context models
     MAX_RESULT_CHARS = 1500
-
     parts = []
     for name, result in results.items():
         if isinstance(result, SubagentResult):
@@ -90,6 +108,99 @@ def orchestrate_tool(tasks_json: str) -> str:
             parts.append(f"[{name}]\n{result_text}")
 
     return "\n\n".join(parts) or "(no results)"
+
+
+def _parse_plan_json(text: str) -> list[dict] | None:
+    """Extract JSON task array from catbus plan output.
+
+    Looks for ```plan ... ``` or ```json ... ``` fenced blocks,
+    or a raw JSON array at the end of the text.
+    """
+    import re
+
+    # Try fenced code blocks: ```plan or ```json
+    fence_pattern = re.compile(r'```(?:plan|json)\s*\n(.*?)```', re.DOTALL)
+    match = fence_pattern.search(text)
+    if match:
+        try:
+            parsed = json.loads(match.group(1).strip())
+            if isinstance(parsed, list) and parsed:
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+    # Try raw JSON array (last occurrence of [...])
+    bracket_pattern = re.compile(r'\[[\s\S]*\]')
+    matches = list(bracket_pattern.finditer(text))
+    for m in reversed(matches):
+        try:
+            parsed = json.loads(m.group())
+            if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+                return parsed
+        except json.JSONDecodeError:
+            continue
+
+    return None
+
+
+def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
+    """Run catbus planner, parse plan, then auto-dispatch execution agents.
+
+    Flow: catbus → parse plan JSON → run execution agents → return all results.
+    """
+    # Phase 1: Run catbus
+    plan_results = _run_parallel(catbus_tasks)
+
+    # Collect plan text and parse execution tasks
+    execution_tasks = []
+    plan_summary_parts = []
+
+    for name, result in plan_results.items():
+        plan_text = result.final_text if isinstance(result, SubagentResult) else str(result)
+        plan_summary_parts.append(f"[{name}] Plan:\n{sanitize_text(plan_text[:800])}")
+
+        parsed = _parse_plan_json(plan_text)
+        if parsed:
+            # Validate each task has type and task/description
+            for t in parsed:
+                if isinstance(t, dict) and t.get("type") and (t.get("task") or t.get("description")):
+                    # Don't allow catbus to spawn more catbus
+                    if t.get("type") != "catbus":
+                        execution_tasks.append(t)
+
+    if not execution_tasks:
+        # Couldn't parse plan — return catbus output as-is for the main agent to handle
+        return "\n\n".join(plan_summary_parts) + "\n\n[Auto-dispatch: no executable tasks found in plan]"
+
+    # Phase 2: Run execution agents
+    exec_results = _run_parallel(execution_tasks)
+
+    # Combine results
+    MAX_RESULT_CHARS = 1500
+    parts = []
+
+    # Plan summary (brief)
+    parts.append("── Plan ──\n" + "\n".join(plan_summary_parts))
+
+    # Execution results
+    parts.append("── Execution ──")
+    for name, result in exec_results.items():
+        if isinstance(result, SubagentResult):
+            result_text = sanitize_text(result.final_text)
+            if len(result_text) > MAX_RESULT_CHARS:
+                result_text = result_text[:MAX_RESULT_CHARS] + "\n...(truncated)"
+            files = ", ".join(result.files_modified[:5]) if result.files_modified else "none"
+            parts.append(
+                f"[{name}] {len(result.tools_used)} tools, files: {files}\n"
+                f"{result_text}"
+            )
+        else:
+            result_text = sanitize_text(str(result))
+            if len(result_text) > MAX_RESULT_CHARS:
+                result_text = result_text[:MAX_RESULT_CHARS] + "\n...(truncated)"
+            parts.append(f"[{name}]\n{result_text}")
+
+    return "\n\n".join(parts)
 
 
 # ─── Parallel execution engine (multiprocessing) ───
@@ -338,6 +449,15 @@ def _run_lightweight_llm(
     try:
         response = model.invoke(messages)
         text = response.content if isinstance(response.content, str) else str(response.content)
+        # Capture token usage from response metadata
+        usage = getattr(response, "usage_metadata", None) or {}
+        if not usage:
+            meta = getattr(response, "response_metadata", {})
+            usage = meta.get("token_usage", meta.get("usage", {}))
+        if usage:
+            emit("tokens",
+                 input=usage.get("input_tokens", usage.get("prompt_tokens", 0)),
+                 output=usage.get("output_tokens", usage.get("completion_tokens", 0)))
     except Exception as e:
         text = f"Planning error: {e}"
 
@@ -439,6 +559,16 @@ def _run_subagent_in_process(
                     msg_type = getattr(msg, "type", None)
 
                     if msg_type == "ai":
+                        # Capture token usage from AI messages
+                        usage = getattr(msg, "usage_metadata", None) or {}
+                        if not usage:
+                            meta = getattr(msg, "response_metadata", {})
+                            usage = meta.get("token_usage", meta.get("usage", {}))
+                        if usage:
+                            emit("tokens",
+                                 input=usage.get("input_tokens", usage.get("prompt_tokens", 0)),
+                                 output=usage.get("output_tokens", usage.get("completion_tokens", 0)))
+
                         tool_calls = getattr(msg, "tool_calls", [])
                         for tc in tool_calls:
                             tc_name = tc.get("name", "?")

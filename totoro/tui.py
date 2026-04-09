@@ -273,7 +273,15 @@ class SplitPaneTUI:
                     if pid_str:
                         self._waddstr(win, row, 3 + len(connector) + 2 + len(name) + 1, pid_str, _PAIR_DIM)
 
+                token_total = 0
+                if pane:
+                    token_total = pane.token_input + pane.token_output
                 stats_text = f"  {elapsed} · {tool_count} tools"
+                if token_total > 0:
+                    if token_total < 1000:
+                        stats_text += f" · {token_total} tok"
+                    else:
+                        stats_text += f" · {token_total // 1000}k tok"
                 self._waddstr(win, row, 3 + len(connector) + 2 + len(name_with_pid), stats_text, _PAIR_DIM)
                 row += 1
 
@@ -343,7 +351,13 @@ class SplitPaneTUI:
                 if pid_str:
                     self._waddstr(win, row, 3 + len(pane.label) + 1, pid_str, _PAIR_DIM)
 
+                token_total = pane.token_input + pane.token_output
                 stats = f"  {elapsed} · {pane.tool_count} tools"
+                if token_total > 0:
+                    if token_total < 1000:
+                        stats += f" · {token_total} tok"
+                    else:
+                        stats += f" · {token_total // 1000}k tok"
                 self._waddstr(win, row, 3 + len(label_display), stats, _PAIR_DIM)
                 row += 1
 
@@ -352,26 +366,42 @@ class SplitPaneTUI:
                     self._waddstr(win, row, 2, f"⚡ {pane.current_tool}"[:w - 3], _PAIR_YELLOW)
                     row += 1
 
-                # Output lines — fill remaining space in this pane's region
-                content_rows = end_row - row - 1  # -1 for separator
-                visible_lines = pane.recent_lines[-max(1, content_rows):]
-                for line in visible_lines:
-                    if row >= end_row - 1:
-                        break
-                    clean = _truncate_to_width(_strip_ansi(line), w - 3)
-
-                    # Color based on content
-                    if clean.startswith("●") or clean.startswith("▸"):
-                        self._waddstr(win, row, 2, clean, _PAIR_CYAN)
-                    elif clean.startswith("  ⎿"):
-                        self._waddstr(win, row, 2, clean, _PAIR_DIM)
-                    elif clean.startswith("+"):
-                        self._waddstr(win, row, 2, clean, _PAIR_GREEN)
-                    elif clean.startswith("✗") or "error" in clean.lower()[:30]:
-                        self._waddstr(win, row, 2, clean, _PAIR_RED)
-                    else:
-                        self._waddstr(win, row, 2, clean, _PAIR_DIM)
-                    row += 1
+                # Tool history (Claude Code style: ⎿ ToolName(args))
+                if pane.tool_history and row < end_row - 1:
+                    max_visible = min(6, end_row - row - 2)
+                    history = pane.tool_history
+                    hidden = max(0, len(history) - max_visible)
+                    visible = history[-max_visible:]
+                    for ti, tc in enumerate(visible):
+                        if row >= end_row - 1:
+                            break
+                        prefix = "⎿ " if ti == 0 else "  "
+                        display = _truncate_to_width(f"{prefix}{tc.summary}", w - 4)
+                        pair = _PAIR_RED if tc.is_error else _PAIR_DIM
+                        self._waddstr(win, row, 2, display, pair)
+                        row += 1
+                    if hidden > 0 and row < end_row - 1:
+                        self._waddstr(win, row, 2, f"  +{hidden} more tool uses", _PAIR_DIM)
+                        row += 1
+                else:
+                    # Fallback to recent output lines
+                    content_rows = end_row - row - 1
+                    visible_lines = pane.recent_lines[-max(1, content_rows):]
+                    for line in visible_lines:
+                        if row >= end_row - 1:
+                            break
+                        clean = _truncate_to_width(_strip_ansi(line), w - 3)
+                        if clean.startswith("●") or clean.startswith("▸"):
+                            self._waddstr(win, row, 2, clean, _PAIR_CYAN)
+                        elif clean.startswith("  ⎿"):
+                            self._waddstr(win, row, 2, clean, _PAIR_DIM)
+                        elif clean.startswith("+"):
+                            self._waddstr(win, row, 2, clean, _PAIR_GREEN)
+                        elif clean.startswith("✗") or "error" in clean.lower()[:30]:
+                            self._waddstr(win, row, 2, clean, _PAIR_RED)
+                        else:
+                            self._waddstr(win, row, 2, clean, _PAIR_DIM)
+                        row += 1
 
                 # Separator between running panes (not after last)
                 if idx < n_running - 1 and end_row - 1 < height:

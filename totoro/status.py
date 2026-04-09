@@ -195,17 +195,8 @@ class StatusTracker:
             info = self.active_subagents.get(agent_name)
             if info:
                 info.tool_count += 1
-                info.current_tool = f"{tool_name} {_format_tool_summary(tool_name, tool_args)}"
-
-            # Log file operations for visibility
-            if tool_name in ("write_file", "edit_file"):
-                path = tool_args.get("path", tool_args.get("file_path", "?"))
-                short = path.split("/")[-1] if "/" in path else path
-                icon = "+" if tool_name == "write_file" else "~"
-                self.activity_log.append(f"{icon} {agent_name}: {short}")
-            elif tool_name == "execute":
-                cmd = tool_args.get("command", "")[:50]
-                self.activity_log.append(f"$ {agent_name}: {cmd}")
+                summary = _format_tool_summary(tool_name, tool_args)
+                info.current_tool = f"{tool_name}({summary})" if summary else tool_name
             self._mark_dirty()
 
     def advance_plan(self):
@@ -323,7 +314,7 @@ class StatusTracker:
             if len(self.todos) > 8:
                 lines.append(f"   {_DIM}... +{len(self.todos) - 8} more{_RESET}")
 
-        # ─── Subagents (tree structure) ───
+        # ─── Subagents (Claude Code style) ───
         if self.active_subagents:
             # Collect pane data
             pane_data = {}
@@ -333,16 +324,18 @@ class StatusTracker:
 
             agent_list = list(self.active_subagents.items())
             for idx, (name, info) in enumerate(agent_list):
-                is_last = idx == len(agent_list) - 1
                 pane = pane_data.get(name)
                 if pane:
                     elapsed_str = pane.elapsed
                     tool_count = pane.tool_count
+                    token_in = pane.token_input
+                    token_out = pane.token_output
                 else:
                     elapsed_str = f"{time.time() - info.started_at:.0f}s"
                     tool_count = info.tool_count
+                    token_in = token_out = 0
 
-                # Status icon with spinner for active agents
+                # Status icon
                 if pane and pane.status == "done":
                     s_icon = f"{_GREEN}{_ICON_DONE}{_RESET}"
                 elif pane and pane.status == "error":
@@ -350,41 +343,52 @@ class StatusTracker:
                 else:
                     s_icon = f"{_MAGENTA}{_SPINNER[self._spinner_idx]}{_RESET}"
 
-                # Tree connector
-                connector = "└── " if is_last else "├── "
-                child_prefix = "    " if is_last else "│   "
-
-                # Use fun display name
+                # Agent header: ● Explore(description)
                 display_name = self._subagent_display_names.get(name, name)
+                desc_short = info.description[:50]
                 lines.append(
-                    f"   {_DIM}{connector}{_RESET}{s_icon} {_BOLD}{display_name}{_RESET}"
-                    f" {_DIM}({name}){_RESET}"
-                    f"  {_DIM}{elapsed_str} · {tool_count} tools{_RESET}"
+                    f"   {s_icon} {_BOLD}{display_name}{_RESET}"
+                    f"{_DIM}({desc_short}){_RESET}"
                 )
 
-                # Recent activity from pane
-                if pane and pane.recent_lines:
-                    for line in pane.recent_lines[-3:]:
-                        display = sanitize_text(str(line))[:width - 12]
-                        lines.append(f"   {_DIM}{child_prefix}{_RESET}{display}")
-                else:
-                    desc = info.description[:width - 12]
-                    lines.append(f"   {_DIM}{child_prefix}{desc}{_RESET}")
+                # Token + tool stats line
+                stats_parts = [f"{elapsed_str}", f"{tool_count} tools"]
+                if token_in or token_out:
+                    stats_parts.append(_format_tokens(token_in + token_out))
+                lines.append(f"     {_DIM}{' · '.join(stats_parts)}{_RESET}")
 
-                # Current tool
+                # Tool history (last 5) + current tool
+                max_tool_lines = 5
+                if pane and pane.tool_history:
+                    history = pane.tool_history
+                    hidden = max(0, len(history) - max_tool_lines)
+                    visible = history[-max_tool_lines:]
+                    for ti, tc in enumerate(visible):
+                        prefix = "⎿ " if ti == 0 else "  "
+                        tool_display = tc.summary[:width - 12]
+                        if tc.is_error:
+                            lines.append(f"     {_DIM}{prefix}{_RESET}{_RED}{tool_display}{_RESET}")
+                        else:
+                            lines.append(f"     {_DIM}{prefix}{tool_display}{_RESET}")
+                    if hidden > 0:
+                        lines.append(f"     {_DIM}  +{hidden} more tool uses{_RESET}")
+
+                # Current active tool (spinner)
                 if pane and pane.current_tool:
-                    lines.append(f"   {_DIM}{child_prefix}{_BLUE}{_ICON_TOOL} {pane.current_tool}{_RESET}")
+                    spinner = _SPINNER[self._spinner_idx]
+                    lines.append(f"     {_BLUE}{spinner} {pane.current_tool}{_RESET}")
                 elif info.current_tool:
-                    lines.append(f"   {_DIM}{child_prefix}{_BLUE}{_ICON_TOOL} {info.current_tool}{_RESET}")
+                    spinner = _SPINNER[self._spinner_idx]
+                    lines.append(f"     {_BLUE}{spinner} {info.current_tool}{_RESET}")
 
         # ─── Current Tool (main agent, no subagents) ───
         elif self.current_tool and self.current_tool not in ("write_todos", "task", "orchestrate_tool"):
             lines.append(f"   {_BLUE}{_ICON_TOOL} {self.current_tool}{_RESET} {_DIM}{self.current_tool_args[:width - 15]}{_RESET}")
 
-        # ─── Activity Log ───
-        if self.activity_log:
+        # ─── Activity Log (only shown when no subagents are active) ───
+        if self.activity_log and not self.active_subagents:
             lines.append(f"   {_DIM}── Recent {'─' * max(0, width - 14)}{_RESET}")
-            for entry in self.activity_log:
+            for entry in list(self.activity_log)[-4:]:
                 if entry.startswith("+"):
                     lines.append(f"   {_GREEN}{entry[:width - 6]}{_RESET}")
                 elif entry.startswith("~"):
@@ -410,15 +414,32 @@ class StatusTracker:
         width = shutil.get_terminal_size().columns - 2
         done = sum(1 for t in self.todos if t.status == "completed")
 
+        # Collect total tokens from pane manager
+        total_tokens = 0
+        if self._pane_manager:
+            for pane in self._pane_manager.get_panes():
+                total_tokens += pane.token_input + pane.token_output
+
         parts = [f"Tools: {self.tool_count}"]
         if total > 0:
             parts.append(f"Plan: {done}/{total}")
         if agent_total > 0:
             parts.append(f"Subagents: {agent_total}")
+        if total_tokens > 0:
+            parts.append(_format_tokens(total_tokens))
 
         summary = " · ".join(parts)
         line = f"{_DIM}── {_CYAN}Done{_DIM} ({summary}) {'─' * max(0, width - len(summary) - 12)}{_RESET}"
         print(line, flush=True)
+
+
+def _format_tokens(total: int) -> str:
+    """Format token count: 1234 → '1.2k', 12345 → '12k'."""
+    if total < 1000:
+        return f"{total} tokens"
+    if total < 10000:
+        return f"{total / 1000:.1f}k tokens"
+    return f"{total // 1000}k tokens"
 
 
 def _format_tool_summary(name: str, args: dict) -> str:

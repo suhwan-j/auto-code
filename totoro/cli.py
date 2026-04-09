@@ -281,13 +281,17 @@ def _run_interactive(agent, invoke_config: dict, session_manager=None,
                 print(result)
             continue
 
-        # Plan-only mode: inject planning constraint
+        # Plan-only mode: inject planning constraint + disable auto-dispatch
+        from totoro.orchestrator import set_plan_only
         if handler.is_plan_only:
+            set_plan_only(True)
             user_input = (
                 f"{user_input}\n\n"
                 "[SYSTEM: Plan-only mode is active. Use write_todos to create a plan. "
                 "Do NOT execute any file operations or shell commands. Only plan.]"
             )
+        else:
+            set_plan_only(False)
 
         # Track turn + analyze user message for Auto-Dream memory
         from totoro.commands.registry import _auto_dream as _ad

@@ -29,6 +29,15 @@ class SubagentResult:
 
 
 @dataclass
+class ToolCall:
+    """Record of a single tool invocation."""
+    name: str
+    summary: str
+    is_error: bool = False
+    result_preview: str = ""
+
+
+@dataclass
 class PaneState:
     """State of a single subagent."""
     label: str
@@ -42,6 +51,9 @@ class PaneState:
     files: list = field(default_factory=list)
     max_lines: int = 20
     pid: int | None = None
+    tool_history: list = field(default_factory=list)  # list[ToolCall]
+    token_input: int = 0
+    token_output: int = 0
 
     @property
     def elapsed(self) -> str:
@@ -96,6 +108,11 @@ class PaneManager:
                 name = event.data.get("name", "")
                 result_text = event.data.get("result", "")
                 is_error = event.data.get("is_error", False)
+                summary = pane.current_tool or name
+                pane.tool_history.append(ToolCall(
+                    name=name, summary=summary,
+                    is_error=is_error, result_preview=result_text[:80],
+                ))
                 # Show result preview for verbose insight
                 if is_error and result_text:
                     pane.append(f"✗ {name}: {result_text[:80]}")
@@ -103,6 +120,10 @@ class PaneManager:
                     # Show short result for non-file tools
                     pane.append(f"  ⎿ {result_text[:80]}")
                 pane.current_tool = ""
+
+            elif event.event_type == "tokens":
+                pane.token_input += event.data.get("input", 0)
+                pane.token_output += event.data.get("output", 0)
 
             elif event.event_type == "diff":
                 text = event.data.get("text", "")
