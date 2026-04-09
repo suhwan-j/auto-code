@@ -89,6 +89,7 @@ class StatusTracker:
 
     def __init__(self):
         self._lock = threading.Lock()
+        self._is_tty: bool = sys.stdout.isatty()  # Disable animations when piped
         self.todos: list[TodoItem] = []
         self.active_subagents: dict[str, SubagentInfo] = {}
         self.completed_subagents: deque[SubagentInfo] = deque(maxlen=50)
@@ -219,7 +220,7 @@ class StatusTracker:
     # ─── Rendering (called from render thread or main thread) ───
 
     def render(self):
-        if not self._panel_enabled:
+        if not self._panel_enabled or not self._is_tty:
             return
         with self._lock:
             # Once AI text has started, stop showing the thinking indicator
