@@ -113,12 +113,15 @@ def _run_and_format(tasks: list[dict]) -> str:
 def _parse_plan_json(text: str) -> list[dict] | None:
     """Extract JSON task array from catbus plan output.
 
-    Looks for ```plan ... ``` or ```json ... ``` fenced blocks,
-    or a raw JSON array at the end of the text.
+    Tries multiple strategies in order:
+    1. Fenced code blocks: ```plan or ```json
+    2. Any fenced code block containing a JSON array
+    3. Raw JSON array anywhere in text
+    4. Individual JSON objects on separate lines
     """
     import re
 
-    # Try fenced code blocks: ```plan or ```json
+    # Strategy 1: ```plan or ```json fenced blocks
     fence_pattern = re.compile(r'```(?:plan|json)\s*\n(.*?)```', re.DOTALL)
     match = fence_pattern.search(text)
     if match:
@@ -129,8 +132,20 @@ def _parse_plan_json(text: str) -> list[dict] | None:
         except json.JSONDecodeError:
             pass
 
-    # Try raw JSON array (last occurrence of [...])
-    bracket_pattern = re.compile(r'\[[\s\S]*\]')
+    # Strategy 2: Any fenced code block containing [
+    any_fence = re.compile(r'```\w*\s*\n(.*?)```', re.DOTALL)
+    for m in any_fence.finditer(text):
+        content = m.group(1).strip()
+        if content.startswith("["):
+            try:
+                parsed = json.loads(content)
+                if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+
+    # Strategy 3: Raw JSON array (last occurrence of [{...},...])
+    bracket_pattern = re.compile(r'\[\s*\{[\s\S]*?\}\s*\]')
     matches = list(bracket_pattern.finditer(text))
     for m in reversed(matches):
         try:
@@ -139,6 +154,19 @@ def _parse_plan_json(text: str) -> list[dict] | None:
                 return parsed
         except json.JSONDecodeError:
             continue
+
+    # Strategy 4: Individual {"type":...,"task":...} objects on lines
+    obj_pattern = re.compile(r'\{\s*"type"\s*:\s*"[^"]+"\s*,\s*"task"\s*:\s*"[^"]*"[^}]*\}')
+    obj_matches = obj_pattern.findall(text)
+    if obj_matches:
+        tasks = []
+        for m in obj_matches:
+            try:
+                tasks.append(json.loads(m))
+            except json.JSONDecodeError:
+                pass
+        if tasks:
+            return tasks
 
     return None
 
@@ -169,13 +197,19 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
                         execution_tasks.append(t)
 
     if not execution_tasks:
-        # Couldn't parse plan — return catbus output with debug hint
-        hint = (
-            "[Auto-dispatch failed] Could not parse executable tasks from catbus plan.\n"
-            "Expected a ```plan\\n[{\"type\":\"satsuki\",\"task\":\"...\"}]\\n``` block.\n"
-            "You should call orchestrate_tool again with specific tasks."
-        )
-        return "\n\n".join(plan_summary_parts) + "\n\n" + hint
+        # Parsing failed — fall back to delegating original task to satsuki
+        # Extract original task description from catbus tasks
+        original_desc = catbus_tasks[0].get("task", catbus_tasks[0].get("description", ""))
+        if original_desc:
+            import sys as _sys
+            print(f"  [info] Plan parsing failed, delegating to satsuki directly", file=_sys.stderr, flush=True)
+            execution_tasks = [{"type": "satsuki", "task": original_desc}]
+        else:
+            hint = (
+                "[Auto-dispatch failed] Could not parse plan and no original task found.\n"
+                "Call orchestrate_tool with specific tasks."
+            )
+            return "\n\n".join(plan_summary_parts) + "\n\n" + hint
 
     # Phase 2: Run execution agents
     exec_results = _run_parallel(execution_tasks)
