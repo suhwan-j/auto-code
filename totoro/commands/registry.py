@@ -106,6 +106,7 @@ def _cmd_help(args, agent, config) -> str:
   /compact           Force context compaction
   /memory            Show extracted memories
   /memory clear      Clear all memories
+  /skill             Manage skills (list/add/install/remove/reload)
   /tasks             Show active sub-agent tasks
   /status            Show agent status (turns, tokens, memories)
 
