@@ -176,9 +176,9 @@ def _cmd_model(args, agent, config) -> str:
                     if selected == model_name:
                         return f"Already using: {model_name}"
                     return f"__model_change__:{selected}"
-                print(f"  {_CP}1-{len(models)} 사이의 숫자 또는 'c'를 입력하세요.{_R}")
+                print(f"  {_CP}Enter a number (1-{len(models)}) or 'c' for custom model.{_R}")
             except ValueError:
-                print(f"  {_CP}1-{len(models)} 사이의 숫자 또는 'c'를 입력하세요.{_R}")
+                print(f"  {_CP}Enter a number (1-{len(models)}) or 'c' for custom model.{_R}")
             except (EOFError, KeyboardInterrupt):
                 return f"Keeping current model: {model_name}"
 
