@@ -293,7 +293,7 @@ class StatusTracker:
         if self.todos:
             if total_count > 0:
                 ratio = done_count / total_count
-                bar_width = min(20, width - 20)
+                bar_width = max(1, min(20, width - 20))
                 filled = int(ratio * bar_width)
                 bar = f"{'█' * filled}{'░' * (bar_width - filled)}"
                 pct = int(ratio * 100)

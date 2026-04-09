@@ -227,7 +227,7 @@ class SplitPaneTUI:
         # Plan progress
         if self.tracker.todos and total_count > 0:
             ratio = done_count / total_count
-            bar_width = min(20, w - 10)
+            bar_width = max(1, min(20, w - 10))
             filled = int(ratio * bar_width)
             bar = "█" * filled + "░" * (bar_width - filled)
             pct = int(ratio * 100)
