@@ -435,8 +435,9 @@ def _stream_with_hitl(agent, user_input: str, config: dict, auto_approve: bool =
             # Clear dashboard before HITL prompt
             render_thread.shutdown()
             render_thread.join(timeout=1)
-            tracker._clear_previous()
-            tracker._last_panel_lines = 0
+            with tracker._lock:
+                tracker._clear_previous()
+                tracker._last_panel_lines = 0
 
             if auto_approve:
                 decisions = [{"type": "approve"} for _ in _flatten_decisions(interrupt_info)]
