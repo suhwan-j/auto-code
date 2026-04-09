@@ -1,4 +1,4 @@
-"""Pydantic configuration models for ATOM-CODE."""
+"""Pydantic configuration models for TOTORO-CODE."""
 
 from __future__ import annotations
 

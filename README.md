@@ -6,10 +6,10 @@
         .  /     \  *        .          .
    *     ./  @ @  \.    .        *       .
     .   /  \  '  /  \        .
-       |    '---'    |  .     ____  ______  ____  __  __
-    .  |  \       /  |       |    ||__  __||    ||  \/  |
-       \   '.___.'   /    .  | || |  ||    | || || |\/| |
-    .   \___________/        |_||_|  ||    |_||_||_|  |_|
+       |    '---'    |  .  _____ ___ _____ ___  ____   ___
+    .  |  \       /  |   |_   _/ _ \_   _/ _ \|  _ \ / _ \
+       \   '.___.'   /  .  | || | | || || | | | |_) | | | |
+    .   \___________/      |_||_| |_||_||_| |_|____/ |_| |_|
          /  | | |  \    *
     *   /   | | |   \        Advanced CLI Coding Agent
        '----' ' '----'  .    Powered by DeepAgents
@@ -64,7 +64,7 @@ TAVILY_API_KEY=tvly-...
 # LangSmith 트레이싱 (선택)
 LANGSMITH_API_KEY=lsv2_...
 LANGSMITH_TRACING=true
-LANGSMITH_PROJECT=ATOM-CODE
+LANGSMITH_PROJECT=TOTORO-CODE
 ```
 
 API 키 우선순위: `OPENROUTER_API_KEY` > `ANTHROPIC_API_KEY` > `OPENAI_API_KEY` > `VLLM_BASE_URL`
@@ -290,7 +290,7 @@ New session: session-1775544000 — implement search feature
 설정은 5단계 우선순위로 적용됩니다:
 
 1. CLI 인수 (최우선)
-2. 환경변수 (`ATOM_MODEL`, `ATOM_FALLBACK_MODEL`, `ATOM_SANDBOX_MODE`)
+2. 환경변수 (`TOTORO_MODEL`, `TOTORO_FALLBACK_MODEL`, `TOTORO_SANDBOX_MODE`)
 3. 프로젝트 설정 (`.totoro/settings.json`)
 4. 사용자 전역 설정 (`~/.totoro/settings.json`)
 5. 기본값
@@ -325,32 +325,40 @@ New session: session-1775544000 — implement search feature
 
 ```
 totoro/
-├── cli.py                # CLI 진입점, 대화형/비대화형 모드
-├── input.py              # prompt_toolkit 기반 입력 (자동완성 드롭다운)
-├── orchestrator.py       # 병렬 서브에이전트 실행 엔진
+├── cli.py                # CLI 진입점 + 대화형 메인 루프 + 배너 (Totoro 마스코트)
+├── colors.py             # 컬러 팔레트 (truecolor ANSI: Blue/Amber/Copper/Ivory)
+├── input.py              # prompt_toolkit 기반 입력 (자동완성, 모드 전환)
+├── hotkey.py             # 스트리밍 중 핫키 감지 (Shift+Tab)
+├── diff.py               # 파일 변경 diff 포맷팅
+├── orchestrator.py       # 병렬 서브에이전트 실행 엔진 (multiprocessing)
+├── pane.py               # 서브에이전트 패널 상태 관리
 ├── status.py             # 실시간 대시보드 렌더러
-├── utils.py              # 텍스트 정리 유틸리티
+├── tui.py                # curses 기반 split-pane TUI
+├── skills.py             # 스킬 매니저 (CRUD + 원격 설치)
+├── utils.py              # 텍스트 새니타이즈 유틸리티
 ├── commands/
-│   └── registry.py       # 슬래시 커맨드 핸들러
+│   └── registry.py       # 슬래시 커맨드 디스패치 (15개 커맨드)
 ├── config/
-│   ├── schema.py         # Pydantic 설정 스키마
-│   └── settings.py       # 5단계 설정 로더
+│   ├── schema.py         # Pydantic 설정 스키마 (AgentConfig)
+│   ├── settings.py       # 5단계 설정 로더
+│   └── setup.py          # 첫 실행 셋업 위저드
 ├── core/
-│   ├── agent.py          # create_deep_agent() 래퍼 + 모델/체크포인터 초기화
-│   └── models.py         # 경량 LLM 초기화 (Auto-Dream 등)
+│   ├── agent.py          # create_totoro_agent() — 에이전트 생성 + 미들웨어 조합
+│   └── models.py         # LLM 프로바이더 초기화 (Auto-Dream용 경량 모델)
 ├── layers/
+│   ├── sanitize.py       # surrogate 문자 정리 (API 호출 전)
 │   ├── auto_dream.py     # 자동 기억 추출 미들웨어
-│   ├── context_compaction.py  # 컨텍스트 압축
-│   ├── sanitize.py       # 서로게이트 문자 정리
+│   ├── context_compaction.py  # 3단계 컨텍스트 컴팩션
 │   └── stall_detector.py # 에이전트 멈춤 감지/복구
 ├── session/
-│   ├── manager.py        # 세션 생성/전환/영구 저장
+│   ├── manager.py        # 세션 생성/전환/영구 저장 (SQLite)
 │   └── restore.py        # 세션 복원 (--resume)
 └── tools/
-    ├── git.py            # Git 도구 (안전 규칙)
+    ├── git.py            # Git 도구 (4단계 안전 규칙)
+    ├── bash.py           # 셸 명령 실행
     ├── web_search.py     # Tavily 웹 검색
-    ├── fetch_url.py      # URL 가져오기
-    └── ask_user.py       # 사용자 질문
+    ├── fetch_url.py      # URL 콘텐츠 가져오기
+    └── ask_user.py       # 사용자 질문 (interrupt 기반 HITL)
 ```
 
 ## 개발

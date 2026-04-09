@@ -1,20 +1,20 @@
-# ATOM-CODE Architecture
+# TOTORO-CODE Architecture
 
 > **구현 스택**: Python 3.11+ / DeepAgents / LangGraph / LangChain  
 > **이 문서**: 기술적 구현 청사진. 무엇을 만들지는 AGENTS.md, 어떻게 만들지는 이 문서.  
-> **핵심 원칙**: DeepAgents 프레임워크가 제공하는 것은 그대로 사용. ATOM-CODE는 프레임워크 위에 커스텀 레이어만 추가.
+> **핵심 원칙**: DeepAgents 프레임워크가 제공하는 것은 그대로 사용. TOTORO-CODE는 프레임워크 위에 커스텀 레이어만 추가.
 
 ---
 
 ## 1. 시스템 개요
 
-ATOM-CODE는 DeepAgents 프레임워크의 `create_deep_agent()`를 중심으로 구축된 CLI 코딩 에이전트다.
+TOTORO-CODE는 DeepAgents 프레임워크의 `create_deep_agent()`를 중심으로 구축된 CLI 코딩 에이전트다.
 프레임워크가 StateGraph, 미들웨어, 내장 도구, 서브에이전트 관리, HITL, 스킬을 모두 처리하므로
-ATOM-CODE는 **커스텀 도구 + 커스텀 레이어**만 구현한다.
+TOTORO-CODE는 **커스텀 도구 + 커스텀 레이어**만 구현한다.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                           ATOM-CODE CLI                                │
+│                           TOTORO-CODE CLI                                │
 │                                                                     │
 │  ┌────────────┐  ┌────────────────┐  ┌─────────────────────────┐   │
 │  │ Textual UI │  │ Non-Interactive │  │ LangGraph API Server    │   │
@@ -26,7 +26,7 @@ ATOM-CODE는 **커스텀 도구 + 커스텀 레이어**만 구현한다.
 │                         ▼                                           │
 │  ┌─────────────────────────────────────────────────────────────┐   │
 │  │                                                             │   │
-│  │              create_deep_agent("sds-ax", ...)               │   │
+│  │              create_deep_agent("totoro", ...)               │   │
 │  │              ═══════════════════════════════                 │   │
 │  │                                                             │   │
 │  │  ┌───────────────────────────────────────────────────┐     │   │
@@ -43,7 +43,7 @@ ATOM-CODE는 **커스텀 도구 + 커스텀 레이어**만 구현한다.
 │  │  └───────────────────────────────────────────────────┘     │   │
 │  │                                                             │   │
 │  │  ┌───────────────────────────────────────────────────┐     │   │
-│  │  │  ATOM-CODE 커스텀 레이어                              │     │   │
+│  │  │  TOTORO-CODE 커스텀 레이어                              │     │   │
 │  │  │                                                   │     │   │
 │  │  │  커스텀 도구: git, bash, web_search, fetch_url,    │     │   │
 │  │  │              ask_user                              │     │   │
@@ -67,7 +67,7 @@ ATOM-CODE는 **커스텀 도구 + 커스텀 레이어**만 구현한다.
 
 ### 프레임워크 vs 커스텀 경계
 
-| 영역 | DeepAgents 자동 제공 | ATOM-CODE 커스텀 구현                           |
+| 영역 | DeepAgents 자동 제공 | TOTORO-CODE 커스텀 구현                           |
 |------|---------------------|--------------------------------------------|
 | 그래프 구조 | StateGraph, 노드, 엣지, 라우팅 | -                                          |
 | 미들웨어 | TodoList, Filesystem, SubAgent, HITL, Skills, Memory | Stall Detection, Context Compaction        |
@@ -85,117 +85,79 @@ ATOM-CODE는 **커스텀 도구 + 커스텀 레이어**만 구현한다.
 ## 2. 디렉토리 구조
 
 ```
-sds-ax/
-├── pyproject.toml                 # 프로젝트 메타데이터, 의존성
+totoro-code/
+├── pyproject.toml                 # 프로젝트 메타데이터, 의존성 (totoro-agent v0.1.0)
+├── README.md                      # 프로젝트 소개 및 사용법
 ├── AGENTS.md                      # 에이전트 사양/행동 규칙
 ├── ARCHITECTURE.md                # 이 문서
-├── .env.example                   # 환경변수 템플릿
+├── .env                           # 환경변수 (API 키)
 │
-├── sds_ax/                        # 메인 패키지
+├── totoro/                        # 메인 패키지
 │   ├── __init__.py
-│   ├── __main__.py                # python -m sds_ax 진입점
-│   ├── cli.py                     # CLI 파서 (argparse), 모드 라우팅
+│   ├── __main__.py                # python -m totoro 진입점
+│   ├── cli.py                     # CLI 파서 + 인터랙티브 메인 루프 + 배너
+│   ├── colors.py                  # 컬러 팔레트 (truecolor ANSI: Blue/Amber/Copper/Ivory)
+│   ├── input.py                   # 입력 핸들러 (prompt_toolkit 자동완성, 모드 전환)
+│   ├── hotkey.py                  # 스트리밍 중 핫키 감지 (Shift+Tab)
+│   ├── status.py                  # 실시간 상태 대시보드 렌더러
+│   ├── pane.py                    # 서브에이전트 패인 상태 추적
+│   ├── tui.py                     # curses 기반 split-pane TUI
+│   ├── orchestrator.py            # 병렬 서브에이전트 오케스트레이션 (multiprocessing)
+│   ├── diff.py                    # 파일 변경 diff 포맷팅
+│   ├── skills.py                  # 스킬 매니저 (CRUD + 원격 설치)
+│   ├── utils.py                   # 텍스트 새니타이즈 유틸리티
 │   │
 │   ├── core/                      # 핵심 — create_deep_agent() 래퍼
 │   │   ├── __init__.py
-│   │   ├── agent.py               # create_sds_ax_agent() — 단일 진입점
+│   │   ├── agent.py               # create_totoro_agent() — 단일 진입점
 │   │   └── models.py              # LLM 프로바이더 초기화, 폴백 체인
 │   │
 │   ├── tools/                     # 커스텀 도구 (프레임워크 내장 도구 외)
 │   │   ├── __init__.py
 │   │   ├── git.py                 # git 도구 (서브커맨드별 안전 규칙)
-│   │   ├── bash.py                # bash 도구 (샌드박스: none/restricted/container)
+│   │   ├── bash.py                # bash 도구 (subprocess 실행)
 │   │   ├── web_search.py          # web_search (Tavily)
-│   │   ├── fetch_url.py           # fetch_url (httpx)
-│   │   ├── ask_user.py            # ask_user (interrupt 기반)
-│   │   └── mcp/                   # MCP 도구 통합
-│   │       ├── __init__.py
-│   │       ├── client.py          # MCP 클라이언트
-│   │       ├── trust.py           # MCP 서버 신뢰 관리
-│   │       └── permissions.py     # MCP 도구 권한 분류 (trust_level 기반)
+│   │   ├── fetch_url.py           # fetch_url (URL 콘텐츠 가져오기)
+│   │   └── ask_user.py            # ask_user (interrupt 기반 HITL)
 │   │
-│   ├── layers/                    # 커스텀 레이어 (프레임워크 미들웨어 외)
+│   ├── layers/                    # 커스텀 미들웨어 레이어
 │   │   ├── __init__.py
+│   │   ├── sanitize.py            # surrogate 문자 제거 (API 호출 전)
 │   │   ├── stall_detector.py      # Stall Detection (넛지 → 모델 전환 → ask_user → 중단)
-│   │   ├── context_compaction.py  # Auto/Reactive/Emergency 컴팩션
+│   │   ├── context_compaction.py  # Auto/Reactive/Emergency 컨텍스트 컴팩션
 │   │   └── auto_dream.py          # Auto-Dream 메모리 추출
 │   │
 │   ├── session/                   # 세션 관리
 │   │   ├── __init__.py
-│   │   ├── manager.py             # 세션 생성/복원/목록
-│   │   └── restore.py             # 세션 복원 시 서브에이전트 상태 처리
+│   │   ├── manager.py             # 세션 생성/복원/목록 (SQLite 체크포인트)
+│   │   └── restore.py             # 세션 복원 시 상태 처리
 │   │
 │   ├── commands/                  # 슬래시 커맨드
 │   │   ├── __init__.py
-│   │   ├── registry.py            # 커맨드 등록/발견
-│   │   ├── help.py
-│   │   ├── clear.py
-│   │   ├── compact.py
-│   │   ├── model.py
-│   │   ├── memory.py
-│   │   ├── tasks.py
-│   │   └── config.py
+│   │   └── registry.py            # 커맨드 등록/디스패치 (15개 커맨드)
 │   │
-│   ├── config/                    # 설정
-│   │   ├── __init__.py
-│   │   ├── settings.py            # 설정 로더 (파일 + 환경변수 + CLI)
-│   │   ├── schema.py              # 설정 스키마 (Pydantic)
-│   │   └── env.py                 # 환경변수 관리
-│   │
-│   ├── ui/                        # TUI 레이어
-│   │   ├── __init__.py
-│   │   ├── app.py                 # Textual App 메인
-│   │   ├── widgets/               # UI 위젯
-│   │   │   ├── prompt_input.py    # 입력 프롬프트
-│   │   │   ├── message_list.py    # 메시지 렌더링
-│   │   │   ├── status_bar.py      # 상태 바 (모델, 세션)
-│   │   │   ├── task_panel.py      # 서브에이전트/태스크 패널
-│   │   │   └── spinner.py         # 로딩 스피너
-│   │   └── theme.py               # 테마 설정
-│   │
-│   ├── telemetry/                 # 텔레메트리
-│   │   ├── __init__.py
-│   │   └── tracer.py              # LangSmith 트레이싱 래퍼
-│   │
-│   └── utils/                     # 유틸리티
+│   └── config/                    # 설정
 │       ├── __init__.py
-│       ├── async_helpers.py       # 비동기 유틸리티
-│       ├── retry.py               # 지수 백오프 재시도
-│       └── formatting.py          # 출력 포맷팅
+│       ├── schema.py              # 설정 스키마 (Pydantic AgentConfig)
+│       ├── settings.py            # 설정 로더 (5단계 우선순위)
+│       └── setup.py               # 첫 실행 셋업 위저드
 │
-├── skills/                        # 프로젝트 레벨 스킬 (SKILL.md 포맷)
-│   ├── deep-interview/SKILL.md
-│   ├── remember/SKILL.md
-│   └── explore/SKILL.md
-│
-├── tests/                         # 테스트
-│   ├── unit/
-│   ├── integration/
-│   └── conftest.py
-│
-└── scripts/                       # 빌드/배포 스크립트
-    ├── install.sh
-    └── dev.sh
+└── built-in/                      # 내장 스킬
+    └── skills/
+        ├── remember/SKILL.md      # 메모리 관리 스킬
+        └── skill-creator/SKILL.md # 스킬 생성 위저드
 ```
-
-**이전 구조 대비 제거된 디렉토리:**
-- `core/graph.py`, `core/state.py`, `core/loop.py` — 프레임워크가 StateGraph 자동 구성
-- `middleware/` — 프레임워크가 미들웨어 자동 포함 (커스텀 레이어는 `layers/`로 분리)
-- `subagents/` — 프레임워크가 선언적 config로 서브에이전트 관리
-- `tools/builtin/` — 프레임워크 내장 도구 (read_file, write_file 등)는 자동 제공
-- `memory/` — 프레임워크의 MemoryMiddleware + StoreBackend 사용 (Auto-Dream만 커스텀)
-- `permissions/` — 프레임워크의 HumanInTheLoopMiddleware가 interrupt_on으로 처리
 
 ---
 
 ## 3. 핵심 모듈 상세 설계
 
-### 3.1 create_sds_ax_agent() (core/agent.py)
+### 3.1 create_totoro_agent() (core/agent.py)
 
-`create_deep_agent()`를 래핑하여 ATOM-CODE 전용 설정을 주입하는 단일 진입점.
+`create_deep_agent()`를 래핑하여 TOTORO-CODE 전용 설정을 주입하는 단일 진입점.
 
 ```python
-# sds_ax/core/agent.py
+# totoro/core/agent.py
 from deepagents import create_deep_agent
 from deepagents.backends import (
     CompositeBackend,
@@ -208,16 +170,16 @@ from langgraph.store.memory import InMemoryStore
 # from langgraph.checkpoint.postgres import PostgresSaver  # 프로덕션
 # from langgraph.store.postgres import PostgresStore        # 프로덕션
 
-from sds_ax.tools.git import git_tool
-from sds_ax.tools.bash import bash_tool
-from sds_ax.tools.web_search import web_search_tool
-from sds_ax.tools.fetch_url import fetch_url_tool
-from sds_ax.tools.ask_user import ask_user_tool
-from sds_ax.config.schema import AgentConfig
+from totoro.tools.git import git_tool
+from totoro.tools.bash import bash_tool
+from totoro.tools.web_search import web_search_tool
+from totoro.tools.fetch_url import fetch_url_tool
+from totoro.tools.ask_user import ask_user_tool
+from totoro.config.schema import AgentConfig
 
 
-def create_sds_ax_agent(config: AgentConfig):
-    """ATOM-CODE 에이전트 생성 — create_deep_agent() 래퍼
+def create_totoro_agent(config: AgentConfig):
+    """TOTORO-CODE 에이전트 생성 — create_deep_agent() 래퍼
 
     DeepAgents 프레임워크가 자동 제공하는 것:
     - StateGraph 구성 (agent → tools → agent 루프)
@@ -226,7 +188,7 @@ def create_sds_ax_agent(config: AgentConfig):
     - 서브에이전트 관리 (선언적 config → task 도구)
     - HITL (interrupt_on → Command(resume=...))
 
-    ATOM-CODE가 추가하는 것:
+    TOTORO-CODE가 추가하는 것:
     - 커스텀 도구: git, bash, web_search, fetch_url, ask_user
     - 서브에이전트 타입 정의 (explorer, coder, researcher, reviewer, planner)
     - CompositeBackend 구성 (/memories/ → StoreBackend)
@@ -247,7 +209,7 @@ def create_sds_ax_agent(config: AgentConfig):
 
     # ─── MCP 도구 로드 (설정에 MCP 서버가 있으면) ───
     if config.mcp and config.mcp.servers:
-        from sds_ax.tools.mcp.client import load_mcp_tools
+        from totoro.tools.mcp.client import load_mcp_tools
         mcp_tools = load_mcp_tools(config.mcp)
         custom_tools.extend(mcp_tools)
 
@@ -313,7 +275,7 @@ def create_sds_ax_agent(config: AgentConfig):
 
     # ─── 에이전트 생성 ───
     agent = create_deep_agent(
-        name="sds-ax",
+        name="totoro",
         model=config.model,                  # "claude-sonnet-4-5-20250929"
         tools=custom_tools,
         system_prompt=system_prompt,
@@ -370,7 +332,7 @@ def _build_system_prompt(config: AgentConfig) -> str:
 
 # 핵심 시스템 프롬프트 (하드코딩)
 CORE_SYSTEM_PROMPT = """
-You are ATOM-CODE, a CLI coding agent. You help users with software development tasks
+You are TOTORO-CODE, a CLI coding agent. You help users with software development tasks
 by reading, writing, and editing code, running commands, searching the web,
 and managing git repositories.
 
@@ -462,12 +424,12 @@ agent.invoke(
 ## 4. 커스텀 도구 구현
 
 프레임워크 내장 도구(`write_todos`, `ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `task`)는
-자동 제공되므로, ATOM-CODE는 아래 5개의 커스텀 도구만 구현한다.
+자동 제공되므로, TOTORO-CODE는 아래 5개의 커스텀 도구만 구현한다.
 
 ### 4.1 git 도구 (tools/git.py)
 
 ```python
-# sds_ax/tools/git.py
+# totoro/tools/git.py
 from langchain.tools import tool
 from langgraph.types import interrupt
 from typing import Optional
@@ -606,7 +568,7 @@ def _extract_push_target(args: str) -> str:
 ### 4.2 bash 도구 (tools/bash.py)
 
 ```python
-# sds_ax/tools/bash.py
+# totoro/tools/bash.py
 from langchain.tools import tool
 from enum import Enum
 import asyncio
@@ -625,7 +587,7 @@ class BashSandbox:
 
     def __init__(self, config: dict):
         self._mode = SandboxMode(config.get("mode", "none"))
-        self._container_image = config.get("container_image", "sds-ax-sandbox:latest")
+        self._container_image = config.get("container_image", "totoro-code-sandbox:latest")
         self._project_root = config.get("project_root", ".")
 
     async def execute(self, command: str, timeout: int = 120) -> str:
@@ -739,7 +701,7 @@ async def bash_tool(
 ### 4.3 web_search / fetch_url / ask_user
 
 ```python
-# sds_ax/tools/web_search.py
+# totoro/tools/web_search.py
 from langchain.tools import tool
 
 
@@ -763,7 +725,7 @@ async def web_search_tool(query: str, max_results: int = 5) -> str:
     return "\n\n---\n\n".join(results) if results else "No results found."
 
 
-# sds_ax/tools/fetch_url.py
+# totoro/tools/fetch_url.py
 from langchain.tools import tool
 
 
@@ -787,7 +749,7 @@ async def fetch_url_tool(url: str, max_length: int = 10000) -> str:
     return content
 
 
-# sds_ax/tools/ask_user.py
+# totoro/tools/ask_user.py
 from langchain.tools import tool
 from langgraph.types import interrupt
 
@@ -813,25 +775,25 @@ def ask_user_tool(question: str) -> str:
 
 ## 4.5 CLI 메인 루프 (cli.py)
 
-프로그램의 진입점. `create_sds_ax_agent()`가 반환한 에이전트를 실행하는 메인 루프.
+프로그램의 진입점. `create_totoro_agent()`가 반환한 에이전트를 실행하는 메인 루프.
 
 ```python
-# sds_ax/cli.py
+# totoro/cli.py
 import time
 from langgraph.types import Command
-from sds_ax.core.agent import create_sds_ax_agent
-from sds_ax.config.schema import AgentConfig
-from sds_ax.config.settings import load_config
-from sds_ax.commands.registry import parse_slash_command
+from totoro.core.agent import create_totoro_agent
+from totoro.config.schema import AgentConfig
+from totoro.config.settings import load_config
+from totoro.commands.registry import parse_slash_command
 
 
 def run_interactive(config: AgentConfig):
     """대화형 모드 메인 루프 (동기 — 스트리밍 출력)"""
-    agent = create_sds_ax_agent(config)
+    agent = create_totoro_agent(config)
     session_id = f"session-{int(time.time())}"
     invoke_config = {"configurable": {"thread_id": session_id}}
 
-    print("ATOM-CODE ready. Type /help for commands.")
+    print("TOTORO-CODE ready. Type /help for commands.")
 
     while True:
         user_input = input("> ").strip()
@@ -950,14 +912,14 @@ def _do_stream(agent, input_payload: dict, config: dict):
 
 def run_non_interactive(config: AgentConfig, task: str):
     """비대화형 모드 (스트리밍 출력)"""
-    agent = create_sds_ax_agent(config)
+    agent = create_totoro_agent(config)
     config_dict = {"configurable": {"thread_id": f"task-{hash(task)}"}}
     _stream_with_hitl(agent, task, config_dict)
 
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="ATOM-CODE CLI Agent")
+    parser = argparse.ArgumentParser(description="TOTORO-CODE CLI Agent")
     parser.add_argument("-n", "--non-interactive", type=str, help="Run single task")
     parser.add_argument("--resume", type=str, help="Resume session by ID")
     args = parser.parse_args()
@@ -968,8 +930,8 @@ def main():
     if args.non_interactive:
         run_non_interactive(config, args.non_interactive)
     elif args.resume:
-        from sds_ax.session.restore import restore_session
-        agent = create_sds_ax_agent(config)
+        from totoro.session.restore import restore_session
+        agent = create_totoro_agent(config)
         restore_session(agent, args.resume)
     else:
         run_interactive(config)
@@ -980,7 +942,7 @@ def main():
 ### 4.5.1 스트리밍 모드 선택 가이드
 
 LangGraph `graph.stream()`은 `stream_mode` 파라미터로 출력 형태를 제어한다.
-ATOM-CODE CLI는 용도에 따라 세 가지 모드를 사용할 수 있다.
+TOTORO-CODE CLI는 용도에 따라 세 가지 모드를 사용할 수 있다.
 
 | `stream_mode` | 용도 | 설명 |
 |---|---|---|
@@ -996,19 +958,19 @@ ATOM-CODE CLI는 용도에 따라 세 가지 모드를 사용할 수 있다.
 
 ## 4.6 커스텀 레이어 통합 (미들웨어 훅)
 
-ATOM-CODE의 커스텀 레이어(Stall Detection, Context Compaction, Auto-Dream)는
+TOTORO-CODE의 커스텀 레이어(Stall Detection, Context Compaction, Auto-Dream)는
 `create_deep_agent()`의 `middleware` 파라미터를 통해 에이전트 실행 루프에 삽입된다.
 
 ```python
-# sds_ax/core/agent.py — create_sds_ax_agent() 내부에서 커스텀 미들웨어 구성
+# totoro/core/agent.py — create_totoro_agent() 내부에서 커스텀 미들웨어 구성
 
-from sds_ax.layers.stall_detector import StallDetector
-from sds_ax.layers.context_compaction import ContextCompactor
-from sds_ax.layers.auto_dream import AutoDreamExtractor
+from totoro.layers.stall_detector import StallDetector
+from totoro.layers.context_compaction import ContextCompactor
+from totoro.layers.auto_dream import AutoDreamExtractor
 
 
 def _build_custom_middleware(config, store):
-    """ATOM-CODE 커스텀 레이어를 DeepAgents 미들웨어 훅으로 통합"""
+    """TOTORO-CODE 커스텀 레이어를 DeepAgents 미들웨어 훅으로 통합"""
 
     stall_detector = StallDetector(config)
     compactor = ContextCompactor(config)
@@ -1077,7 +1039,7 @@ def _apply_permission_rules(tool_call, permissions):
     return None
 ```
 
-그리고 `create_sds_ax_agent()` 내부의 `create_deep_agent()` 호출에 `middleware` 추가:
+그리고 `create_totoro_agent()` 내부의 `create_deep_agent()` 호출에 `middleware` 추가:
 
 ```python
 agent = create_deep_agent(
@@ -1100,11 +1062,11 @@ agent = create_deep_agent(
 ## 5. 서브에이전트 구현
 
 DeepAgents 프레임워크가 서브에이전트의 생명주기를 완전히 관리한다.
-ATOM-CODE는 `create_deep_agent(subagents=[...])` 에 선언적 config만 전달하면 된다.
+TOTORO-CODE는 `create_deep_agent(subagents=[...])` 에 선언적 config만 전달하면 된다.
 
 ### 5.1 선언적 서브에이전트 config
 
-`create_sds_ax_agent()` 내부에서 전달하는 서브에이전트 선언은 **section 3.1**에 정의되어 있다.
+`create_totoro_agent()` 내부에서 전달하는 서브에이전트 선언은 **section 3.1**에 정의되어 있다.
 5가지 타입: explorer, coder, researcher, reviewer, planner.
 
 ### 5.2 프레임워크가 자동 처리하는 것
@@ -1197,10 +1159,10 @@ backend=lambda rt: CompositeBackend(
 ### 6.2 Auto-Dream 메모리 추출 (layers/auto_dream.py)
 
 프레임워크의 MemoryMiddleware가 메모리 검색/주입을 처리하지만,
-**대화에서 새로운 메모리를 자동 추출**하는 것은 ATOM-CODE 커스텀 레이어다.
+**대화에서 새로운 메모리를 자동 추출**하는 것은 TOTORO-CODE 커스텀 레이어다.
 
 ```python
-# sds_ax/layers/auto_dream.py
+# totoro/layers/auto_dream.py
 import asyncio
 from typing import Optional
 
@@ -1315,7 +1277,7 @@ def _parse_json_response(text: str) -> list[dict]:
 
 ## 7. Stall Detection (layers/stall_detector.py)
 
-프레임워크에 없는 ATOM-CODE 전용 커스텀 레이어.
+프레임워크에 없는 TOTORO-CODE 전용 커스텀 레이어.
 에이전트가 진행하지 못하고 빈 턴을 반복할 때 단계적으로 복구한다.
 
 ### 7.1 복구 단계
@@ -1344,7 +1306,7 @@ def _parse_json_response(text: str) -> list[dict]:
 ### 7.2 구현
 
 ```python
-# sds_ax/layers/stall_detector.py
+# totoro/layers/stall_detector.py
 from langgraph.types import interrupt
 from langchain_core.messages import HumanMessage
 
@@ -1428,7 +1390,7 @@ class StallDetector:
 ### 8.2 구현
 
 ```python
-# sds_ax/layers/context_compaction.py
+# totoro/layers/context_compaction.py
 from langchain_core.messages import SystemMessage, HumanMessage
 
 
@@ -1543,7 +1505,7 @@ def _summarize_messages(messages: list) -> str:
 ### 9.2 구현
 
 ```python
-# sds_ax/tools/mcp/permissions.py
+# totoro/tools/mcp/permissions.py
 from enum import Enum
 from typing import Optional
 import fnmatch
@@ -1654,7 +1616,7 @@ class MCPPermissionResolver:
 ### 10.1 복원 흐름
 
 ```
-sds-ax --resume <session_id>
+totoro --resume <session_id>
     │
     ▼
 체크포인터에서 상태 로드 (MemorySaver / PostgresSaver)
@@ -1675,7 +1637,7 @@ sds-ax --resume <session_id>
 ### 10.2 구현
 
 ```python
-# sds_ax/session/restore.py
+# totoro/session/restore.py
 from langgraph.types import interrupt, Command
 
 
@@ -1726,7 +1688,7 @@ async def list_sessions(checkpointer) -> list[dict]:
 ## 11. 설정 스키마 (config/schema.py)
 
 ```python
-# sds_ax/config/schema.py
+# totoro/config/schema.py
 from pydantic import BaseModel, Field
 from typing import Optional, Literal
 
@@ -1766,7 +1728,7 @@ class ContextConfig(BaseModel):
 class SandboxConfig(BaseModel):
     mode: Literal["none", "restricted", "container"] = "none"
     allowed_hosts: list[str] = Field(default_factory=list)
-    container_image: str = "sds-ax-sandbox:latest"
+    container_image: str = "totoro-code-sandbox:latest"
 
 
 class MCPServerConfig(BaseModel):
@@ -1782,7 +1744,7 @@ class MCPConfig(BaseModel):
 
 
 class AgentConfig(BaseModel):
-    """ATOM-CODE 전체 설정 스키마"""
+    """TOTORO-CODE 전체 설정 스키마"""
     model: str = "claude-sonnet-4-5-20250929"
     fallback_model: str = "claude-haiku-4-5-20251001"
     project_root: str = "."
@@ -1799,11 +1761,11 @@ class AgentConfig(BaseModel):
 ### 11.2 설정 로더 (config/settings.py)
 
 ```python
-# sds_ax/config/settings.py
+# totoro/config/settings.py
 import os
 import json
 from pathlib import Path
-from sds_ax.config.schema import AgentConfig
+from totoro.config.schema import AgentConfig
 
 
 def load_config(
@@ -1850,7 +1812,7 @@ def _load_env_overrides() -> dict:
     """환경변수에서 설정 오버라이드 로드
 
     .env 파일이 있으면 자동 로드 (python-dotenv).
-    환경변수 매핑: SDS_AX_MODEL → model, SDS_AX_FALLBACK_MODEL → fallback_model 등.
+    환경변수 매핑: TOTORO_MODEL → model, TOTORO_FALLBACK_MODEL → fallback_model 등.
     """
     from dotenv import load_dotenv
     load_dotenv()  # .env 파일 자동 로드
@@ -1858,9 +1820,9 @@ def _load_env_overrides() -> dict:
     overrides = {}
 
     # 모델 설정
-    if v := os.environ.get("SDS_AX_MODEL"):
+    if v := os.environ.get("TOTORO_MODEL"):
         overrides["model"] = v
-    if v := os.environ.get("SDS_AX_FALLBACK_MODEL"):
+    if v := os.environ.get("TOTORO_FALLBACK_MODEL"):
         overrides["fallback_model"] = v
 
     # API 키 (create_deep_agent가 내부적으로 사용하지만, 환경변수로 전달됨)
@@ -1868,7 +1830,7 @@ def _load_env_overrides() -> dict:
     # 여기서 별도 처리 불필요. 단, 존재 여부만 검증.
 
     # 샌드박스
-    if v := os.environ.get("SDS_AX_SANDBOX_MODE"):
+    if v := os.environ.get("TOTORO_SANDBOX_MODE"):
         overrides.setdefault("sandbox", {})["mode"] = v
 
     return overrides
@@ -1896,8 +1858,8 @@ def ensure_api_keys():
 > ANTHROPIC_API_KEY=sk-ant-...
 > # OPENAI_API_KEY=sk-...          # Alternative: OpenAI/OpenRouter
 > # TAVILY_API_KEY=tvly-...        # Optional: for web_search tool
-> # SDS_AX_MODEL=claude-sonnet-4-5-20250929
-> # SDS_AX_SANDBOX_MODE=none
+> # TOTORO_MODEL=claude-sonnet-4-5-20250929
+> # TOTORO_SANDBOX_MODE=none
 > ```
 
 ---
@@ -1906,7 +1868,7 @@ def ensure_api_keys():
 
 ```toml
 [project]
-name = "sds-ax"
+name = "totoro"
 requires-python = ">=3.11"
 
 [project.dependencies]
@@ -1937,7 +1899,7 @@ python-dotenv = ">=1.0"
 rich = ">=13.0"                  # 터미널 출력 포맷팅
 
 [project.scripts]
-sds-ax = "sds_ax.cli:main"
+totoro = "totoro.cli:main"
 ```
 
 ---
@@ -1947,7 +1909,7 @@ sds-ax = "sds_ax.cli:main"
 ### Phase 1: 기초 골격 (MVP)
 - [ ] 프로젝트 구조 생성 (pyproject.toml, 패키지 구조)
 - [ ] AgentConfig 설정 스키마 (config/schema.py)
-- [ ] `create_sds_ax_agent()` 구현 (core/agent.py) — `create_deep_agent()` 래핑
+- [ ] `create_totoro_agent()` 구현 (core/agent.py) — `create_deep_agent()` 래핑
 - [ ] 커스텀 도구 5종: git, bash, web_search, fetch_url, ask_user
 - [ ] Git 안전 규칙 엔진 (서브커맨드별 분류, force-push 차단, 민감 파일 감지)
 - [ ] CLI 진입점 (cli.py) — 비대화형 모드 먼저

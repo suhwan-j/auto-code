@@ -28,11 +28,11 @@ def load_config(cli_overrides: dict | None = None, project_root: str | None = No
                 config_dict[k] = v
 
     # Env overrides
-    if v := os.environ.get("ATOM_MODEL"):
+    if v := os.environ.get("TOTORO_MODEL"):
         config_dict["model"] = v
-    if v := os.environ.get("ATOM_FALLBACK_MODEL"):
+    if v := os.environ.get("TOTORO_FALLBACK_MODEL"):
         config_dict["fallback_model"] = v
-    if v := os.environ.get("ATOM_SANDBOX_MODE"):
+    if v := os.environ.get("TOTORO_SANDBOX_MODE"):
         config_dict.setdefault("sandbox", {})["mode"] = v
 
     # CLI overrides

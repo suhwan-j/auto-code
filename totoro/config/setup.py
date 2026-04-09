@@ -286,14 +286,14 @@ def _configure_extras(existing: dict | None) -> dict:
             if key.strip():
                 extras["langsmith_api_key"] = key.strip()
                 extras["langsmith_tracing"] = True
-                project = input(f"  LangSmith project name {_DIM}[ATOM-CODE]{_RESET} > ").strip()
-                extras["langsmith_project"] = project if project else "ATOM-CODE"
+                project = input(f"  LangSmith project name {_DIM}[TOTORO-CODE]{_RESET} > ").strip()
+                extras["langsmith_project"] = project if project else "TOTORO-CODE"
         except (EOFError, KeyboardInterrupt):
             pass
     elif current_ls:
         extras["langsmith_api_key"] = current_ls
         extras["langsmith_tracing"] = existing_extras.get("langsmith_tracing", True)
-        extras["langsmith_project"] = existing_extras.get("langsmith_project", "ATOM-CODE")
+        extras["langsmith_project"] = existing_extras.get("langsmith_project", "TOTORO-CODE")
 
     return extras
 
@@ -353,7 +353,7 @@ def inject_env_from_settings(settings: dict):
 
     # Set provider preference
     if provider:
-        os.environ["ATOM_PROVIDER"] = provider
+        os.environ["TOTORO_PROVIDER"] = provider
 
     # Extras
     extras = settings.get("extras", {})
