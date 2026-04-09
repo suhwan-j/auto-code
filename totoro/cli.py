@@ -647,10 +647,17 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
         with tracker._lock:
             tracker._clear_previous()
             tracker._last_panel_lines = 0
-        had_error = True
-        err_type = type(e).__name__
-        err_detail = sanitize_text(str(e))[:500]
-        _safe_print(f"\n{_RED}[Stream error] {err_type}: {err_detail}{_RESET}", flush=True)
+
+        # Some LangGraph internal errors are recoverable — skip silently if we already got a response
+        err_detail = str(e)
+        is_internal = "'str' object has no attribute" in err_detail or "'NoneType' object" in err_detail
+        if is_internal and got_ai_response:
+            # LangGraph internal processing error but agent already responded — not fatal
+            pass
+        else:
+            had_error = True
+            err_type = type(e).__name__
+            _safe_print(f"\n{_RED}[Stream error] {err_type}: {sanitize_text(err_detail)[:500]}{_RESET}", flush=True)
         # Show HTTP status if available (e.g., OpenRouter/OpenAI API errors)
         if hasattr(e, 'status_code'):
             _safe_print(f"{_DIM}  HTTP {e.status_code}{_RESET}", flush=True)
