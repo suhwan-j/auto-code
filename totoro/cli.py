@@ -661,6 +661,8 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
         # Fallback: try non-streaming invoke
         try:
             result = agent.invoke(input_payload, config=config)
+            if not isinstance(result, dict):
+                result = {"messages": []}
             messages = result.get("messages", [])
             for msg in reversed(messages):
                 if hasattr(msg, "type") and msg.type == "ai" and msg.content:
