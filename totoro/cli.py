@@ -546,11 +546,13 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
                                 _safe_print(text, end="", flush=True)
                                 tracker._mark_dirty()
 
-                    # Tool call chunks — mark as active (but don't track args here;
-                    # messages mode sends args as partial JSON strings, not dicts.
-                    # Full args are captured from the "updates" stream below.)
+                    # Tool call chunks — show tool name in status panel
                     if tool_call_chunks:
                         got_ai_response = True
+                        for tc_chunk in tool_call_chunks:
+                            tc_name = tc_chunk.get("name", "")
+                            if tc_name:
+                                tracker.on_tool_start(tc_name, tc_chunk.get("args", {}))
 
                 # Tool result messages — handle diffs and errors
                 elif msg_type == "tool":
