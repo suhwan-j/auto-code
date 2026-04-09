@@ -13,5 +13,6 @@ dist/
 build/
 *.egg
 
-# Totoro settings (contains API keys)
+# Totoro settings and runtime files
 .totoro/settings.json
+character.md
