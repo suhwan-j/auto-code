@@ -131,9 +131,22 @@ class SplitPaneTUI:
         self._right_win = curses.newwin(h, w - self._div_col - 1, 0, self._div_col + 1)
 
         self._running = True
+        prev_h, prev_w = h, w
         while self._running:
             try:
                 h, w = stdscr.getmaxyx()
+
+                # Recreate windows on terminal resize
+                if h != prev_h or w != prev_w:
+                    prev_h, prev_w = h, w
+                    self._div_col = int(w * 0.5)
+                    try:
+                        self._left_win = curses.newwin(h, max(1, self._div_col), 0, 0)
+                        self._right_win = curses.newwin(h, max(1, w - self._div_col - 1), 0, self._div_col + 1)
+                    except curses.error:
+                        pass
+                    stdscr.clear()
+
                 self._render_divider(h)
                 self._render_left(h)
                 self._render_right(h)
@@ -153,6 +166,8 @@ class SplitPaneTUI:
                 key = stdscr.getch()
                 if key == 3:  # Ctrl+C
                     break
+                if key == curses.KEY_RESIZE:
+                    continue  # Immediately re-render on resize
 
                 time.sleep(0.3)
             except curses.error:
