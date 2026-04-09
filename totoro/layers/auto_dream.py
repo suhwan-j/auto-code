@@ -173,6 +173,26 @@ class CharacterFile:
             if self._path.exists():
                 self._path.unlink()
 
+    def remove(self, memory_type: str, name: str) -> bool:
+        """Remove a specific memory by type and name. Returns True if found."""
+        with self._lock:
+            data = self._read()
+            entries = data.get(memory_type, {})
+            if name in entries:
+                del entries[name]
+                self._write(data)
+                return True
+        return False
+
+    def remove_by_index(self, index: int) -> dict | None:
+        """Remove a memory by its display index (1-based). Returns removed entry or None."""
+        all_entries = self.get_all()
+        if 1 <= index <= len(all_entries):
+            entry = all_entries[index - 1]
+            if self.remove(entry["type"], entry["name"]):
+                return entry
+        return None
+
     def trim(self, max_entries: int) -> None:
         """Keep only the last max_entries per type."""
         with self._lock:
@@ -474,8 +494,17 @@ class AutoDreamExtractor:
             name = m.get("name", "unnamed")
             content = m.get("content", "")[:100]
             lines.append(f"  {i}. {DIM}[{mtype}]{RESET} {BOLD}{name}{RESET}: {content}")
-        lines.append(f"\n  {DIM}Stored at: {self._store._path}{RESET}")
+        lines.append(f"\n  {DIM}Commands: /memory remove <#> · /memory clean · /memory clear{RESET}")
+        lines.append(f"  {DIM}Stored at: {self._store._path}{RESET}")
         return "\n".join(lines)
+
+    def remove_memory_by_index(self, index: int) -> dict | None:
+        """Remove a memory by display index (1-based)."""
+        return self._store.remove_by_index(index)
+
+    def clear(self):
+        """Clear all memories."""
+        self._store.clear()
 
 
 # ─── Middleware ───

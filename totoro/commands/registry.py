@@ -105,7 +105,9 @@ def _cmd_help(args, agent, config) -> str:
   /sessions          List all sessions with numbers
   /compact           Force context compaction
   /memory            Show extracted memories
-  /memory clear      Clear all memories
+  /memory remove <#> Remove a specific memory by number
+  /memory clean      Remove temporary project memories
+  /memory clear      Clear ALL memories
   /skill             Manage skills (list/add/install/remove/reload)
   /tasks             Show active sub-agent tasks
   /status            Show agent status (turns, tokens, memories)
@@ -330,9 +332,39 @@ def _cmd_memory(args, agent, config) -> str:
     if _auto_dream is None:
         return "Memory extraction not available (Auto-Dream not configured)."
 
-    if args.strip() == "clear":
+    subcmd = args.strip().lower()
+
+    if subcmd == "clear":
         _auto_dream.clear()
         return "All memories cleared."
+
+    # /memory remove <number> or /memory rm <number>
+    if subcmd.startswith("remove ") or subcmd.startswith("rm "):
+        try:
+            idx = int(subcmd.split()[-1])
+            removed = _auto_dream.remove_memory_by_index(idx)
+            if removed:
+                return f"Removed: [{removed['type']}] {removed['name']}: {removed['content'][:60]}"
+            return f"No memory at index {idx}."
+        except ValueError:
+            return "Usage: /memory remove <number>"
+
+    # /memory clean — remove domain memories about temporary projects
+    if subcmd == "clean":
+        removed_count = 0
+        store = _auto_dream._store
+        all_entries = store.get_all()
+        skip_patterns = ["new-project", "project-location", "project-domain", "tech-stack",
+                         "todo-app", "cafe-kiosk", "totoro-calc", "totoro-code"]
+        for entry in all_entries:
+            if entry["type"] == "domain":
+                name = entry["name"]
+                if any(p in name for p in skip_patterns):
+                    store.remove(entry["type"], name)
+                    removed_count += 1
+        if removed_count > 0:
+            return f"Cleaned {removed_count} temporary domain memories."
+        return "No temporary domain memories to clean."
 
     return _auto_dream.format_memories_display()
 

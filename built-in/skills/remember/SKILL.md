@@ -45,17 +45,23 @@ Store WHAT to avoid and WHY if given.
 Example: user says "테스트에서 DB mock 하지마" → `"content": "Never mock database in tests — use real DB"`
 
 ### 4. Domain Topics (`type: "domain"`)
-Extract when the user reveals domain knowledge or context:
-- Technology stack (e.g. "우리는 TypeScript + Serverless", "Python 3.12")
-- Architecture (e.g. "MSA 구조야", "monorepo")
-- Business terms or product names the user references
-- Recurring technical topics the user keeps asking about
+Extract ONLY when the user reveals **their own long-term domain context**:
+- Their team's/company's technology stack (e.g. "우리 팀은 TypeScript + Serverless")
+- Their product/company architecture (e.g. "우리 서비스는 MSA 구조야")
+- Business terms they consistently use across sessions
+
+**The key test**: Would this fact be useful in a DIFFERENT conversation, weeks later?
+If it's only relevant to the current task → don't store it.
 
 ### NEVER extract:
 - Code snippets or file contents (available in git)
-- Temporary tasks ("이 버그 고쳐줘", "TODO 앱 만들어줘")
-- Information already in existing memories (check before storing)
-- Vague or uncertain information — only clear, explicit facts
+- **Temporary tasks** ("이 버그 고쳐줘", "TODO 앱 만들어줘", "계산기 만들어줘")
+- **One-off project creation requests** ("XX 프로젝트 만들어줘", "XX 앱 만들어줘")
+- **File paths or project locations** (~/project/xxx, /tmp/xxx)
+- **Tech stacks of projects being created** — only store if user says "우리 팀/회사는 이걸 쓴다"
+- **Current working directory or project info** — derivable from filesystem/git
+- Information already in existing memories
+- Vague or uncertain information
 
 ## Output Format
 
@@ -86,6 +92,15 @@ User: "우리 팀은 TypeScript + Serverless Framework으로 MSA 개발해"
 
 User: "이 버그 좀 고쳐줘"
 → `[]` (temporary task, nothing to remember)
+
+User: "~/project에 TODO 앱 만들어줘. React + NestJS로"
+→ `[]` (one-off project creation request — tech stack is for THIS project, not the user's team)
+
+User: "/tmp/totoro-calc 폴더에 계산기 만들어줘"
+→ `[]` (temporary task with temp path — nothing about the user)
+
+User: "프론트엔드는 electron으로 만들어줘"
+→ `[]` (instruction for current task, not a persistent user preference)
 
 User: "응답 끝에 요약 붙이지 마, 나도 diff 볼 줄 알아"
 → `[{"type": "avoided", "name": "no-trailing-summary", "content": "Do not add summaries at the end of responses — user reads diffs directly"}]`
