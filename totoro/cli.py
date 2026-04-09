@@ -206,7 +206,9 @@ def main():
     if task:
         session_info = session_manager.create_session(description=task[:50])
         invoke_config = session_manager.get_invoke_config(session_info.session_id)
-        _stream_with_hitl(agent, task, invoke_config, auto_approve=args.auto_approve, verbose=verbose)
+        success = _stream_with_hitl(agent, task, invoke_config, auto_approve=args.auto_approve, verbose=verbose)
+        if not success:
+            sys.exit(1)
     elif args.resume:
         from totoro.session.restore import restore_session
         invoke_config = restore_session(agent, args.resume, session_manager)
@@ -386,8 +388,12 @@ def _persist_model_to_settings(model_name: str, project_root: str = ""):
 
 
 def _stream_with_hitl(agent, user_input: str, config: dict, auto_approve: bool = False,
-                      verbose: bool = False, handler=None):
-    """Stream agent response with HITL interrupt handling and live status dashboard."""
+                      verbose: bool = False, handler=None) -> bool:
+    """Stream agent response with HITL interrupt handling and live status dashboard.
+
+    Returns:
+        True if the agent produced a response, False if errors occurred.
+    """
     _ensure_imports()
     from totoro.orchestrator import set_tracker, set_pane_manager, RenderThread
     from totoro.pane import PaneManager
@@ -475,6 +481,7 @@ def _stream_with_hitl(agent, user_input: str, config: dict, auto_approve: bool =
 
     # Show final summary
     tracker.render_final_summary()
+    return tracker.tool_count > 0 or tracker._got_ai_text
 
 
 def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbose: bool = False) -> list | None:
