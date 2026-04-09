@@ -56,6 +56,8 @@ def _wcswidth(text: str) -> int:
 
 def _truncate_to_width(text: str, max_width: int) -> str:
     """Truncate string to fit within max_width display columns."""
+    if max_width <= 0:
+        return ""
     w = 0
     for i, ch in enumerate(text):
         cw = _wcwidth(ch)
@@ -363,7 +365,7 @@ class SplitPaneTUI:
 
                 # Current tool indicator
                 if pane.current_tool and row < end_row - 1:
-                    self._waddstr(win, row, 2, f"⚡ {pane.current_tool}"[:w - 3], _PAIR_YELLOW)
+                    self._waddstr(win, row, 2, _truncate_to_width(f"⚡ {pane.current_tool}", w - 3), _PAIR_YELLOW)
                     row += 1
 
                 # Tool history (Claude Code style: ⎿ ToolName(args))
