@@ -670,9 +670,18 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
             tracker._clear_previous()
             tracker._last_panel_lines = 0
         if event_count == 0:
-            _safe_print(f"{_YELLOW}(No events from agent — model may not be responding. Try --verbose){_RESET}", flush=True)
+            _safe_print(
+                f"{_YELLOW}(No response from model. Possible causes:\n"
+                f"  • API key invalid or expired — check with `totoro --setup`\n"
+                f"  • Network timeout — check internet connection\n"
+                f"  • Model unavailable — try a different model with /model\n"
+                f"  Use --verbose for debug details){_RESET}", flush=True)
         else:
-            _safe_print(f"{_YELLOW}(Got {event_count} events but no AI text — model may not support tool calling. Try --verbose){_RESET}", flush=True)
+            _safe_print(
+                f"{_YELLOW}(Got {event_count} events but no AI text.\n"
+                f"  • Model may not support tool calling\n"
+                f"  • Try a different model with /model\n"
+                f"  Use --verbose for debug details){_RESET}", flush=True)
 
     # Check for pending interrupts — but NOT if we hit an error
     if not had_error:
