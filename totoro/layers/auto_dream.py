@@ -541,18 +541,11 @@ class AutoDreamMiddleware(AgentMiddleware):
             self._extractor._analyze_user_message_deferred(pending)
 
         # 2. Threshold-based full conversation extraction
-        token_count = _estimate_tokens(messages)
+        from totoro.layers._token_utils import estimate_tokens
+        token_count = estimate_tokens(messages)
         tool_count = sum(1 for m in messages if hasattr(m, "tool_call_id"))
         self._extractor.maybe_extract_async(messages, token_count, tool_count)
         return None
-
-
-# ─── Helpers ───
-
-def _estimate_tokens(messages: list) -> int:
-    """Estimate token count from messages (4 chars ~ 1 token)."""
-    total_chars = sum(len(getattr(m, "content", str(m)) or "") for m in messages)
-    return total_chars // 4
 
 
 def _format_messages(messages: list) -> str:

@@ -298,11 +298,14 @@ def _build_custom_middleware(config: AgentConfig, store):
     middleware_list.append(SanitizeMiddleware())
 
     # 1. Context Compaction — before_model: auto-compact when context usage is high
+    #    Uses the lightweight model for intelligent summarization
     from totoro.layers.context_compaction import ContextCompactionMiddleware
+    compact_model = create_lightweight_model(config.fallback_model)
     middleware_list.append(ContextCompactionMiddleware(
         auto_threshold=config.context.auto_compact_threshold,
         reactive_threshold=config.context.reactive_compact_threshold,
         emergency_threshold=config.context.emergency_compact_threshold,
+        model=compact_model,
     ))
 
     # 2. Stall Detection — after_model hook
