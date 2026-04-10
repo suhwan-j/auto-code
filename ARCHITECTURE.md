@@ -122,10 +122,11 @@ totoro-code/
 │   │
 │   ├── layers/                    # 커스텀 미들웨어 레이어
 │   │   ├── __init__.py
+│   │   ├── _token_utils.py        # CJK 가중치 토큰 추정 + 모델별 컨텍스트 윈도우 매핑
 │   │   ├── sanitize.py            # surrogate 문자 제거 (API 호출 전)
 │   │   ├── stall_detector.py      # Stall Detection (넛지 → 모델 전환 → ask_user → 중단)
-│   │   ├── context_compaction.py  # Auto/Reactive/Emergency 컨텍스트 컴팩션
-│   │   └── auto_dream.py          # Auto-Dream 메모리 추출
+│   │   ├── context_compaction.py  # LLM 기반 Auto/Reactive/Emergency 컨텍스트 컴팩션
+│   │   └── auto_dream.py          # Auto-Dream 메모리 추출 (비례 배분 주입)
 │   │
 │   ├── session/                   # 세션 관리
 │   │   ├── __init__.py
@@ -1031,13 +1032,29 @@ agent = create_deep_agent(
 
 ## 5. 서브에이전트 구현
 
-DeepAgents 프레임워크가 서브에이전트의 생명주기를 완전히 관리한다.
-TOTORO-CODE는 `create_deep_agent(subagents=[...])` 에 선언적 config만 전달하면 된다.
+TOTORO-CODE는 `multiprocessing` 기반 병렬 오케스트레이션을 사용한다.
+메인 에이전트가 `orchestrate_tool`을 호출하면 서브에이전트들이 별도 프로세스에서 병렬 실행된다.
 
 ### 5.1 선언적 서브에이전트 config
 
 `create_totoro_agent()` 내부에서 전달하는 서브에이전트 선언은 **section 3.1**에 정의되어 있다.
-5가지 타입: explorer, coder, researcher, reviewer, planner.
+5가지 타입: catbus(planner), satsuki(coder), mei(researcher), tatsuo(reviewer), susuwatari(micro).
+
+### 5.1.1 Auto-Dispatch 컨텍스트 전달
+
+서브에이전트는 별도 프로세스에서 실행되므로 대화 히스토리가 없다.
+Auto-dispatch(catbus 플랜 → 실행) 시 각 실행 에이전트에 원래 사용자 요청과 플랜 컨텍스트를 주입한다:
+
+```
+## Original User Request
+REST API에 사용자 관리 기능을 추가해줘
+
+## Plan Context
+[catbus-0] Plan: 1. satsuki: Create users CRUD ...
+
+## Your Task
+Create src/api/users.ts with CRUD endpoints
+```
 
 ### 5.2 프레임워크가 자동 처리하는 것
 
@@ -1128,125 +1145,30 @@ backend=lambda rt: CompositeBackend(
 
 ### 6.2 Auto-Dream 메모리 추출 (layers/auto_dream.py)
 
-프레임워크의 MemoryMiddleware가 메모리 검색/주입을 처리하지만,
-**대화에서 새로운 메모리를 자동 추출**하는 것은 TOTORO-CODE 커스텀 레이어다.
+대화에서 사용자 정보, 선호도, 도메인 지식을 **자동 추출**하여 `~/.totoro/character.md`에 저장하는 커스텀 레이어.
+
+**추출 트리거** (하나라도 충족 시):
+- 토큰 5000+ 증가
+- 도구 호출 3회+ 증가
+- 사용자 턴 3회+ 증가
+
+**메모리 타입**: user(역할/전문성), preferred(승인된 접근법), avoided(거부된 접근법), domain(도메인 지식)
+
+**추출 규칙**: `built-in/skills/remember/SKILL.md`에 정의. 프로젝트/글로벌 스킬로 오버라이드 가능.
+
+**저장 형식**: `~/.totoro/character.md` (마크다운, 사람이 직접 편집/git 관리 가능)
+
+**시스템 프롬프트 주입**: 비례 배분 방식으로 전체 메모리를 주입. 총 60개 초과 시 타입별 균등 배분하되, 각 타입에서 초기 엔트리(역할/정체성)와 최근 엔트리를 모두 보존.
 
 ```python
-# totoro/layers/auto_dream.py
-import asyncio
-from typing import Optional
-
-
-class AutoDreamExtractor:
-    """대화에서 자동으로 메모리를 추출하는 비동기 프로세서
-
-    경량 LLM을 포크하여 메인 에이전트 실행과 병렬로 동작.
-    임계값 (토큰 또는 도구 호출 수) 도달 시 추출 트리거.
-    """
-
-    EXTRACTION_PROMPT = """
-    Analyze the following conversation segment and extract information worth
-    storing as long-term memory.
-
-    Extract these types:
-    1. user: user's role, expertise, preferences
-    2. feedback: corrections or confirmations about work style
-    3. domain: domain knowledge (business logic, terminology, rules)
-    4. project: project-specific context (architecture decisions, conventions)
-
-    Do NOT extract:
-    - Code itself (available in git/files)
-    - Temporary task state
-    - Information already in existing memories
-
-    Existing memories:
-    {existing_memories}
-
-    Conversation segment:
-    {conversation_segment}
-
-    Return as JSON array:
-    [{"type": "...", "name": "...", "description": "...", "content": "...", "tags": [...]}]
-    Return empty array [] if nothing to extract.
-    """
-
-    def __init__(self, model, store, config=None):
-        self._model = model       # 경량 LLM (haiku 등)
-        self._store = store
-        self._config = config
-        self._last_extraction_token_count = 0
-        self._last_extraction_tool_count = 0
-
-    async def maybe_extract(
-        self,
-        messages: list,
-        current_token_count: int,
-        tool_count: int,
-    ) -> None:
-        """임계값 확인 후 비차단 추출 트리거"""
-        threshold = 5000
-        if self._config and hasattr(self._config, 'memory'):
-            threshold = self._config.memory.extraction_threshold_tokens
-
-        token_delta = current_token_count - self._last_extraction_token_count
-        tool_delta = tool_count - self._last_extraction_tool_count
-
-        if token_delta < threshold and tool_delta < 3:
-            return  # 임계값 미달
-
-        # 비차단: fire-and-forget
-        asyncio.create_task(self._extract(messages))
-        self._last_extraction_token_count = current_token_count
-        self._last_extraction_tool_count = tool_count
-
-    async def _extract(self, messages: list) -> None:
-        """실제 추출 로직 (경량 LLM 호출)"""
-        try:
-            existing = await self._store.list_all_summaries()
-            recent_segment = messages[-20:]  # 최근 20개 메시지만
-
-            from langchain_core.messages import SystemMessage
-            response = await self._model.ainvoke([
-                SystemMessage(content=self.EXTRACTION_PROMPT.format(
-                    existing_memories=existing,
-                    conversation_segment=_format_messages(recent_segment),
-                ))
-            ])
-
-            entries = _parse_json_response(response.content)
-            for entry in entries:
-                # StoreBackend에 /memories/ 경로로 저장
-                await self._store.put(
-                    namespace=("memory", entry["type"]),
-                    key=entry["name"],
-                    value=entry,
-                )
-        except Exception:
-            pass  # 추출 실패는 메인 흐름에 영향 없음
-
-
-def _format_messages(messages: list) -> str:
-    """메시지 리스트를 텍스트로 변환"""
-    lines = []
-    for m in messages:
-        role = getattr(m, "type", "unknown")
-        content = getattr(m, "content", str(m))
-        if content:
-            lines.append(f"[{role}] {content[:500]}")
-    return "\n".join(lines)
-
-
-def _parse_json_response(text: str) -> list[dict]:
-    """LLM 응답에서 JSON 배열 추출"""
-    import json
-    try:
-        # JSON 블록 찾기
-        start = text.index("[")
-        end = text.rindex("]") + 1
-        return json.loads(text[start:end])
-    except (ValueError, json.JSONDecodeError):
-        return []
+# 메모리 주입 시 비례 배분 로직
+if total_entries > 60:
+    per_type = max(3, 60 // num_types)
+    # 각 타입에서: 처음 1/3 + 마지막 2/3 선택
+    selected = entries[:keep_first] + entries[-keep_last:]
 ```
+
+**비동기 추출**: 메인 모델 응답 후 백그라운드 스레드에서 경량 LLM(fallback_model) 호출. 세션 종료 시 동기 최종 추출.
 
 ---
 
@@ -1350,117 +1272,53 @@ class StallDetectorMiddleware:
 
 ---
 
-## 8. 컨텍스트 관리 (layers/context_compaction.py)
+## 8. 컨텍스트 관리
 
-컨텍스트 윈도우 사용률에 따른 3단계 자동 압축.
+컨텍스트 윈도우 사용률에 따른 3단계 자동 압축 + CJK 가중치 토큰 추정 + 모델별 동적 윈도우 매핑.
 
-### 8.1 임계값
+### 8.1 토큰 추정 (layers/_token_utils.py)
+
+CJK(한국어/일본어/중국어) 문자는 Latin 문자보다 토큰 소모가 크므로 가중치를 적용:
+- Latin/ASCII: ~4 chars per token (0.25 tokens/char)
+- CJK 문자: ~1.5 chars per token (2 tokens/char)
+
+### 8.2 모델 컨텍스트 윈도우 자동 매핑
+
+모델명 기반으로 컨텍스트 윈도우 크기를 자동 감지. `ContextConfig.model_context_window`로 수동 오버라이드 가능.
+
+| 모델 패밀리 | 컨텍스트 윈도우 |
+|-------------|----------------|
+| Claude (전체) | 200K |
+| GPT-4o, GPT-4 Turbo | 128K |
+| GPT-4 (기본) | 8K |
+| Gemini 1.5 Pro | 2M |
+| Llama 3.1+ | 128K |
+| DeepSeek V3 | 128K |
+| 알 수 없는 모델 | 200K (기본값) |
+
+### 8.3 3단계 컴팩션 임계값
 
 | 단계 | 임계값 | 동작 |
 |------|--------|------|
-| Auto Compact | 70% | 오래된 메시지를 요약으로 대체 |
-| Reactive Compact | 85% | 더 공격적인 요약 + 도구 결과 축약 |
-| Emergency Compact | 95% | 최근 N개 메시지만 유지, 나머지 요약 한 줄 |
+| Auto Compact | 70% | 오래된 메시지를 LLM 요약으로 대체 |
+| Reactive Compact | 85% | 더 공격적인 LLM 요약 + 도구 결과 축약 |
+| Emergency Compact | 95% | 최근 5개 메시지 + LLM 3-5줄 핵심 요약 |
 
-### 8.2 구현
+### 8.4 LLM 기반 요약
+
+`fallback_model`(경량 LLM, 예: Haiku)을 사용하여 컴팩션 시 실제 의미 기반 요약 생성.
+API 키가 없거나 LLM 호출 실패 시 기존 heuristic 방식(메시지당 200자 잘라서 나열)으로 자동 폴백.
 
 ```python
-# totoro/layers/context_compaction.py
-from langchain_core.messages import SystemMessage, HumanMessage
-
-
+# 요약 우선순위: LLM 요약 → heuristic 폴백
 class ContextCompactor:
-    """컨텍스트 윈도우 사용률 기반 자동 압축"""
-
-    def __init__(self, config):
-        self._auto_threshold = config.context.auto_compact_threshold          # 0.7
-        self._reactive_threshold = config.context.reactive_compact_threshold  # 0.85
-        self._emergency_threshold = config.context.emergency_compact_threshold  # 0.95
-        self._model = None  # 요약용 LLM (lazy init)
-
-    def check_and_compact(self, messages: list, model_context_window: int) -> list | None:
-        """컨텍스트 사용률 확인 후 필요 시 압축된 메시지 리스트 반환
-
-        Returns:
-            None: 압축 불필요
-            list: 압축된 메시지 리스트
-        """
-        token_count = _estimate_tokens(messages)
-        usage_ratio = token_count / model_context_window
-
-        if usage_ratio < self._auto_threshold:
-            return None
-
-        if usage_ratio >= self._emergency_threshold:
-            return self._emergency_compact(messages)
-        elif usage_ratio >= self._reactive_threshold:
-            return self._reactive_compact(messages)
-        else:
-            return self._auto_compact(messages)
-
-    def _auto_compact(self, messages: list) -> list:
-        """Auto Compact (70%): 오래된 메시지 요약"""
-        # 메시지를 절반으로 분할: 오래된 절반 → 요약
-        midpoint = len(messages) // 2
-        old_messages = messages[:midpoint]
-        recent_messages = messages[midpoint:]
-
-        summary = _summarize_messages(old_messages)
-        return [
-            SystemMessage(content=f"[Compacted context summary]\n{summary}"),
-            *recent_messages,
-        ]
-
-    def _reactive_compact(self, messages: list) -> list:
-        """Reactive Compact (85%): 공격적 요약 + 도구 결과 축약"""
-        # 최근 1/3만 유지, 나머지 요약
-        keep_count = max(len(messages) // 3, 10)
-        old_messages = messages[:-keep_count]
-        recent_messages = messages[-keep_count:]
-
-        # 도구 결과도 축약
-        recent_messages = [_truncate_tool_result(m) for m in recent_messages]
-
-        summary = _summarize_messages(old_messages)
-        return [
-            SystemMessage(content=f"[Compacted context summary]\n{summary}"),
-            *recent_messages,
-        ]
-
-    def _emergency_compact(self, messages: list) -> list:
-        """Emergency Compact (95%): 최소한만 유지"""
-        # 최근 5개 메시지만 유지
-        recent = messages[-5:]
-        summary = "Previous conversation compacted due to context limit."
-        return [
-            SystemMessage(content=f"[Emergency compact]\n{summary}"),
-            *recent,
-        ]
-
-
-def _estimate_tokens(messages: list) -> int:
-    """메시지 리스트의 대략적 토큰 수 추정 (4 chars = 1 token)"""
-    total_chars = sum(len(getattr(m, "content", str(m)) or "") for m in messages)
-    return total_chars // 4
-
-
-def _truncate_tool_result(message) -> object:
-    """도구 결과 메시지의 content가 너무 길면 축약"""
-    if hasattr(message, "tool_call_id") and message.content:
-        if len(message.content) > 2000:
-            message.content = message.content[:2000] + "\n... (truncated)"
-    return message
-
-
-def _summarize_messages(messages: list) -> str:
-    """메시지 리스트를 간단한 요약으로 변환"""
-    lines = []
-    for m in messages:
-        role = getattr(m, "type", "unknown")
-        content = getattr(m, "content", "")
-        if content and role in ("human", "ai"):
-            lines.append(f"- [{role}] {content[:200]}")
-    return "\n".join(lines[-20:]) if lines else "No significant content."
+    def _summarize(self, messages, emergency=False):
+        if self._model is not None:
+            try:
+                return self._llm_summarize(messages, emergency)
+            except Exception:
+                pass
+        return _heuristic_summarize(messages)
 ```
 
 ---
@@ -1698,6 +1556,7 @@ class ContextConfig(BaseModel):
     auto_compact_threshold: float = 0.7
     reactive_compact_threshold: float = 0.85
     emergency_compact_threshold: float = 0.95
+    model_context_window: int | None = None  # None = 모델명 기반 자동 감지
 
 
 class SandboxConfig(BaseModel):
