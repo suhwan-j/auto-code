@@ -569,13 +569,15 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
             tracker._mark_dirty()
 
     def _flush_text_buffer(buf, trk, print_fn, dim, reset):
-        """Flush buffered AI text to screen."""
+        """Flush buffered AI text to screen with ● > header."""
         if not buf:
             return
         with trk._lock:
             trk._got_ai_text = True
             trk._clear_previous()
             trk._last_panel_lines = 0
+            # Blank line for visual separation from subagent summary
+            print_fn("", flush=True)
             print_fn(f"{dim}● > {reset}", end="", flush=True)
             print_fn("".join(buf), end="", flush=True)
             trk._mark_dirty()
