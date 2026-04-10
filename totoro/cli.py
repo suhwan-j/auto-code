@@ -557,6 +557,8 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
     had_error = False
     ai_header_printed = False
     streaming_ai_id: str | None = None  # Track which AI message is being streamed
+    _tool_call_seen = False  # True once tool_call_chunks appear in current AI msg
+    _ai_text_lines = 0  # Lines of AI text output (for erasure if tool call follows)
 
     def _clear_and_print(text: str, **kwargs):
         """Clear dashboard and print below it."""
@@ -582,6 +584,12 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
 
                 # AI token streaming
                 if msg_type in ("ai", "AIMessageChunk"):
+                    # Reset per-message state when a new AI message starts
+                    chunk_id = getattr(msg_chunk, "id", None)
+                    if chunk_id and chunk_id != streaming_ai_id and streaming_ai_id is not None:
+                        _tool_call_seen = False
+                        _ai_text_lines = 0
+
                     content = getattr(msg_chunk, "content", "")
                     tool_call_chunks = getattr(msg_chunk, "tool_call_chunks", [])
 
@@ -593,7 +601,7 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
                                 b.get("text", "") if isinstance(b, dict) else str(b)
                                 for b in content
                             )
-                        if text:
+                        if text and not _tool_call_seen:
                             got_ai_response = True
                             with tracker._lock:
                                 tracker._got_ai_text = True
@@ -604,11 +612,26 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
                                     ai_header_printed = True
                                     streaming_ai_id = getattr(msg_chunk, "id", None)
                                 _safe_print(text, end="", flush=True)
+                                _ai_text_lines += text.count("\n")
                                 tracker._mark_dirty()
 
-                    # Tool call chunks — show tool name in status panel
+                    # Tool call chunks — suppress any text that was streamed
+                    # before we knew this was a tool-call message (not pure text).
+                    # LLMs sometimes output "thinking" text alongside tool calls.
                     if tool_call_chunks:
                         got_ai_response = True
+                        if ai_header_printed and not _tool_call_seen:
+                            # Erase the streamed text — it was "thinking out loud"
+                            # before the tool call, not intended for the user
+                            with tracker._lock:
+                                sys.stdout.write("\r")
+                                sys.stdout.write("\033[2K")  # clear line
+                                # Clear any multi-line output
+                                sys.stdout.write(f"\033[1A\033[2K" * _ai_text_lines)
+                                sys.stdout.flush()
+                                ai_header_printed = False
+                                tracker._got_ai_text = False
+                            _tool_call_seen = True
                         for tc_chunk in tool_call_chunks:
                             tc_name = tc_chunk.get("name", "")
                             if tc_name:
