@@ -288,14 +288,16 @@ class StatusTracker:
         counters.append(f"Tools: {self.tool_count}")
         if agent_count > 0:
             counters.append(f"Agents: {agent_count}")
-        total_tok = self.token_input + self.token_output
+        total_in = self.token_input
+        total_out = self.token_output
         total_cached = self.token_cached
         if self._pane_manager:
             for p in self._pane_manager.get_panes():
-                total_tok += p.token_input + p.token_output
+                total_in += p.token_input
+                total_out += p.token_output
                 total_cached += getattr(p, "token_cached", 0)
-        if total_tok > 0:
-            counters.append(_format_tokens_with_cache(total_tok, total_cached))
+        if total_in or total_out:
+            counters.append(_format_tokens_detail(total_in, total_out, total_cached))
         counter_str = f" {_DIM}{' · '.join(counters)}{_RESET}"
 
         spinner = _SPINNER[self._spinner_idx]
@@ -366,9 +368,8 @@ class StatusTracker:
                 # Token + tool stats line
                 stats_parts = [f"{elapsed_str}", f"{tool_count} tools"]
                 if token_in or token_out:
-                    tok_total = token_in + token_out
                     tok_cached = getattr(pane, "token_cached", 0) if pane else 0
-                    stats_parts.append(_format_tokens_with_cache(tok_total, tok_cached))
+                    stats_parts.append(_format_tokens_detail(token_in, token_out, tok_cached))
                 lines.append(f"     {_DIM}{' · '.join(stats_parts)}{_RESET}")
 
                 # Tool history (last 5) + current tool
@@ -430,11 +431,13 @@ class StatusTracker:
         done = sum(1 for t in self.todos if t.status == "completed")
 
         # Collect total tokens: main agent + subagents
-        total_tokens = self.token_input + self.token_output
+        total_in = self.token_input
+        total_out = self.token_output
         total_cached = self.token_cached
         if self._pane_manager:
             for pane in self._pane_manager.get_panes():
-                total_tokens += pane.token_input + pane.token_output
+                total_in += pane.token_input
+                total_out += pane.token_output
                 total_cached += getattr(pane, "token_cached", 0)
 
         parts = [f"Tools: {self.tool_count}"]
@@ -442,8 +445,8 @@ class StatusTracker:
             parts.append(f"Plan: {done}/{total}")
         if agent_total > 0:
             parts.append(f"Subagents: {agent_total}")
-        if total_tokens > 0:
-            parts.append(_format_tokens_with_cache(total_tokens, total_cached))
+        if total_in or total_out:
+            parts.append(_format_tokens_detail(total_in, total_out, total_cached))
 
         # Accumulate into session-level counter
         panes = self._pane_manager.get_panes() if self._pane_manager else []
@@ -488,21 +491,27 @@ def _format_tokens(total: int) -> str:
     return f"{total // 1000}k tokens"
 
 
-def _format_tokens_with_cache(total: int, cached: int) -> str:
-    """Format token display showing effective (uncached) tokens.
+def _format_tokens_short(count: int) -> str:
+    """Compact token format without 'tokens' suffix: 1234 → '1.2k', 200 → '200'."""
+    if count < 1000:
+        return str(count)
+    if count < 10000:
+        return f"{count / 1000:.1f}k"
+    return f"{count // 1000}k"
 
-    When caching is active, shows only the new/uncached tokens with ↑ prefix,
-    similar to Claude Code's display. This represents the actual cost-bearing
-    portion of the request.
+
+def _format_tokens_detail(input_tok: int, output_tok: int, cached: int) -> str:
+    """Format token display with input/output breakdown.
+
+    ↑ = new input tokens (uncached context sent to model)
+    ↓ = output tokens (model's response)
 
     Examples:
-      No cache:   "8.3k tokens"
-      With cache: "↑ 2.0k tokens"  (8.3k total - 6.3k cached + output)
+      No cache:   "↑ 6.0k ↓ 200 tokens"
+      With cache: "↑ 2.0k ↓ 200 tokens"
     """
-    if cached > 0:
-        effective = max(0, total - cached)
-        return f"↑ {_format_tokens(effective)}"
-    return _format_tokens(total)
+    effective_input = max(0, input_tok - cached)
+    return f"↑ {_format_tokens_short(effective_input)} ↓ {_format_tokens_short(output_tok)} tokens"
 
 
 def _format_tool_summary(name: str, args: dict) -> str:
