@@ -340,22 +340,82 @@ def _switch_session(target: str, agent, config) -> str:
     if target_session.session_id == current_id:
         return f"Already on session: {current_id}"
 
-    # Verify state exists in checkpointer
+    # Verify state exists in checkpointer and get messages
     target_config = _session_manager.get_invoke_config(target_session.session_id)
+    messages = []
     try:
         state = agent.get_state(target_config)
-        msg_count = len(state.values.get("messages", [])) if state and state.values else 0
+        if state and state.values:
+            messages = state.values.get("messages", [])
     except Exception:
-        msg_count = 0
+        pass
+    msg_count = len(messages)
 
     # Switch
     config["configurable"]["thread_id"] = target_session.session_id
 
+    # Build output with recent conversation history
     desc = f" — {target_session.description}" if target_session.description else ""
-    return (
-        f"{_AL}Switched to session:{_R} {target_session.session_id}{desc}\n"
-        f"  Turns: {target_session.turn_count} · Messages: {msg_count}"
-    )
+    lines = [
+        f"{_AL}Switched to session:{_R} {target_session.session_id}{desc}",
+        f"  Turns: {target_session.turn_count} · Messages: {msg_count}",
+    ]
+
+    # Show recent conversation (last few human/ai exchanges)
+    if messages:
+        recent = _format_recent_messages(messages, max_pairs=3)
+        if recent:
+            lines.append(f"\n{_D}── Recent conversation ──{_R}")
+            lines.append(recent)
+
+    return "\n".join(lines)
+
+
+def _format_recent_messages(messages: list, max_pairs: int = 3) -> str:
+    """Format recent human/ai message pairs for session switch display.
+
+    Args:
+        messages: Full message list from checkpointer.
+        max_pairs: Maximum number of human→ai pairs to show.
+
+    Returns:
+        Formatted string with recent conversation, or empty string.
+    """
+    pairs = []
+    for msg in messages:
+        role = getattr(msg, "type", None)
+        content = getattr(msg, "content", "")
+        if isinstance(content, list):
+            # Extract text from multi-block content
+            text_parts = [
+                b["text"] if isinstance(b, dict) and b.get("type") == "text" else ""
+                for b in content if isinstance(b, (str, dict))
+            ]
+            content = " ".join(text_parts)
+        if not content or not isinstance(content, str):
+            continue
+        content = content.strip()
+        if not content:
+            continue
+
+        if role == "human":
+            pairs.append({"human": content[:150], "ai": None})
+        elif role == "ai" and pairs and pairs[-1]["ai"] is None:
+            pairs[-1]["ai"] = content[:200]
+
+    # Take last N pairs
+    recent = [p for p in pairs if p["ai"]][-max_pairs:]
+    if not recent:
+        return ""
+
+    lines = []
+    for p in recent:
+        lines.append(f"  {_B}◆{_R} {p['human']}")
+        ai_text = p["ai"]
+        if len(ai_text) > 150:
+            ai_text = ai_text[:150] + "..."
+        lines.append(f"  {_D}● {ai_text}{_R}")
+    return "\n".join(lines)
 
 
 def _cmd_sessions(args, agent, config) -> str:
