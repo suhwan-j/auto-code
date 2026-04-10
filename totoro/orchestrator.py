@@ -727,26 +727,19 @@ def _run_subagent_in_process(
     character_prompt = subagent_cfg.get("system_prompt", "") + TASK_AGENT_RULES
     character_name = subagent_cfg.get("name", "totoro-task")
 
+    # Use home directory as root so subagents can freely work with any
+    # user project (e.g. ~/todo-app) without cd workarounds.
+    # virtual_mode=False means absolute paths still work regardless of root_dir.
+    from pathlib import Path
+    home_dir = str(Path.home())
     backend = LocalShellBackend(
-        root_dir=project_root,
+        root_dir=home_dir,
         virtual_mode=False,
         inherit_env=True,
     )
 
     # Minimal middleware — subagents do one focused task, no planning/delegation
-    # Override execute description to emphasize cd requirement
-    _EXECUTE_DESC_OVERRIDE = (
-        "Execute a shell command. "
-        "IMPORTANT: Commands run from the PROJECT ROOT, NOT from the target directory. "
-        "You MUST prefix with 'cd <target_dir> &&' when working outside the project root. "
-        "Example: cd /home/user/todo-app && npm test\n"
-        "Each call is a separate subprocess — cd does NOT persist between calls.\n"
-        "Use '&&' to chain commands. Use ';' when failure of earlier commands is acceptable."
-    )
-    fs_middleware = FilesystemMiddleware(
-        backend=backend,
-        custom_tool_descriptions={"execute": _EXECUTE_DESC_OVERRIDE},
-    )
+    fs_middleware = FilesystemMiddleware(backend=backend)
 
     # Filter filesystem tools by agent role to reduce token overhead
     # mei (researcher): read-only — no write, edit, execute (~848 tokens saved)
