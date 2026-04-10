@@ -756,7 +756,7 @@ def _run_subagent_in_process(
         middleware=middleware,
         checkpointer=MemorySaver(),
         name=character_name,
-    ).with_config({"recursion_limit": 9_999})
+    ).with_config({"recursion_limit": 200})
 
     # Stream the subagent
     thread_id = f"sub-{label}-{os.getpid()}-{int(time.time() * 1000)}"
@@ -767,6 +767,8 @@ def _run_subagent_in_process(
     pending_ops: dict[str, dict] = {}
     empty_turns = 0
     max_empty_turns = 3
+    max_execution_seconds = 300  # 5 minute hard timeout per subagent
+    start_time = time.time()
 
     def emit(event_type: str, **data):
         try:
@@ -778,6 +780,11 @@ def _run_subagent_in_process(
 
     try:
         for event in subagent.stream(input_payload, config=config, stream_mode="updates"):
+            # Hard timeout check
+            if time.time() - start_time > max_execution_seconds:
+                result.final_text += f"\n[Subagent timed out after {max_execution_seconds}s]"
+                emit("error", text=f"Timed out after {max_execution_seconds}s")
+                break
 
             for node_name, node_output in event.items():
                 if not isinstance(node_output, dict):
