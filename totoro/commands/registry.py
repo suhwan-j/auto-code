@@ -361,60 +361,55 @@ def _switch_session(target: str, agent, config) -> str:
         f"  Turns: {target_session.turn_count} · Messages: {msg_count}",
     ]
 
-    # Show recent conversation (last few human/ai exchanges)
+    # Replay recent conversation (last few human/ai exchanges)
     if messages:
-        recent = _format_recent_messages(messages, max_pairs=3)
-        if recent:
+        replay = _replay_recent_messages(messages, max_pairs=5)
+        if replay:
             lines.append(f"\n{_D}── Recent conversation ──{_R}")
-            lines.append(recent)
+            lines.append(replay)
 
     return "\n".join(lines)
 
 
-def _format_recent_messages(messages: list, max_pairs: int = 3) -> str:
-    """Format recent human/ai message pairs for session switch display.
+def _replay_recent_messages(messages: list, max_pairs: int = 5) -> str:
+    """Replay recent human/ai messages as they originally appeared.
 
     Args:
         messages: Full message list from checkpointer.
         max_pairs: Maximum number of human→ai pairs to show.
 
     Returns:
-        Formatted string with recent conversation, or empty string.
+        Formatted string replaying the conversation, or empty string.
     """
-    pairs = []
+    # Collect human/ai pairs (skip tool messages)
+    display_msgs = []
     for msg in messages:
         role = getattr(msg, "type", None)
+        if role not in ("human", "ai"):
+            continue
         content = getattr(msg, "content", "")
         if isinstance(content, list):
-            # Extract text from multi-block content
             text_parts = [
                 b["text"] if isinstance(b, dict) and b.get("type") == "text" else ""
                 for b in content if isinstance(b, (str, dict))
             ]
             content = " ".join(text_parts)
-        if not content or not isinstance(content, str):
+        if not content or not isinstance(content, str) or not content.strip():
             continue
-        content = content.strip()
-        if not content:
-            continue
+        display_msgs.append((role, content.strip()))
 
-        if role == "human":
-            pairs.append({"human": content[:150], "ai": None})
-        elif role == "ai" and pairs and pairs[-1]["ai"] is None:
-            pairs[-1]["ai"] = content[:200]
-
-    # Take last N pairs
-    recent = [p for p in pairs if p["ai"]][-max_pairs:]
+    # Take last N*2 messages (N pairs)
+    recent = display_msgs[-(max_pairs * 2):]
     if not recent:
         return ""
 
     lines = []
-    for p in recent:
-        lines.append(f"  {_B}◆{_R} {p['human']}")
-        ai_text = p["ai"]
-        if len(ai_text) > 150:
-            ai_text = ai_text[:150] + "..."
-        lines.append(f"  {_D}● {ai_text}{_R}")
+    for role, content in recent:
+        if role == "human":
+            lines.append(f"{_B}◆ > {_R}{content}")
+        elif role == "ai":
+            lines.append(f"{_D}● > {_R}{content}")
+        lines.append("")  # blank line between messages
     return "\n".join(lines)
 
 
