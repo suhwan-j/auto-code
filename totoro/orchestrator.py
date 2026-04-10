@@ -383,8 +383,9 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
     MAX_RESULT_CHARS = 1500
     parts = []
 
-    # Plan summary (brief)
-    parts.append("── Plan ──\n" + "\n".join(plan_summary_parts))
+    # Plan summary — show dispatched tasks only, not catbus raw output
+    task_list = [f"  {i+1}. [{t.get('type')}] {t.get('task', t.get('description', ''))[:80]}" for i, t in enumerate(execution_tasks)]
+    parts.append(f"── Plan ({len(execution_tasks)} tasks) ──\n" + "\n".join(task_list))
 
     # Execution results
     parts.append("── Execution ──")
