@@ -200,9 +200,13 @@ class PaneManager:
                 files_str = ""
                 if pane.files:
                     files_str = f", {len(pane.files)} files"
+                tok_str = ""
+                if pane.token_input or pane.token_output:
+                    from totoro.status import _format_tokens_detail
+                    tok_str = f", {_format_tokens_detail(pane.token_input, pane.token_output, pane.token_cached)}"
                 parts.append(
                     f"  {icon} {_BOLD}{pane.label}{_RESET} "
-                    f"({pane.elapsed}, {pane.tool_count} tools{files_str})"
+                    f"({pane.elapsed}, {pane.tool_count} tools{files_str}{tok_str})"
                 )
             if parts:
                 return f"\n{_DIM}── Subagent Summary ──{_RESET}\n" + "\n".join(parts)
