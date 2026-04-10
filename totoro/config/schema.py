@@ -37,6 +37,7 @@ class ContextConfig(BaseModel):
     auto_compact_threshold: float = 0.7
     reactive_compact_threshold: float = 0.85
     emergency_compact_threshold: float = 0.95
+    model_context_window: int | None = None  # None = auto-detect from model name
 
 
 class SandboxConfig(BaseModel):

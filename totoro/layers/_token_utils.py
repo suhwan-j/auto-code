@@ -56,3 +56,80 @@ def _estimate_text_tokens(text: str) -> int:
     non_cjk_chars = len(text) - cjk_chars
     # CJK: ~2 tokens per char, Latin: ~0.25 tokens per char
     return int(cjk_chars * 2 + non_cjk_chars / 4)
+
+
+# ─── Model context window mapping ───
+
+# Known context window sizes by model name substring (checked in order).
+# Covers common model families. Falls back to 200K if no match.
+_CONTEXT_WINDOW_MAP: list[tuple[str, int]] = [
+    # Claude family
+    ("claude-opus-4",       200_000),
+    ("claude-sonnet-4",     200_000),
+    ("claude-3-7",          200_000),
+    ("claude-3-5",          200_000),
+    ("claude-3-opus",       200_000),
+    ("claude-3-sonnet",     200_000),
+    ("claude-3-haiku",      200_000),
+    ("claude-haiku-4",      200_000),
+    ("claude",              200_000),  # fallback for any Claude
+    # OpenAI GPT family
+    ("gpt-4.1",             1_047_576),
+    ("gpt-4o",              128_000),
+    ("gpt-4-turbo",         128_000),
+    ("gpt-4-1106",          128_000),
+    ("gpt-4-0125",          128_000),
+    ("gpt-4",               8_192),
+    ("gpt-3.5-turbo-16k",   16_384),
+    ("gpt-3.5-turbo",       16_384),
+    ("o3",                  200_000),
+    ("o4-mini",             200_000),
+    ("o1",                  200_000),
+    # Google Gemini
+    ("gemini-2",            1_048_576),
+    ("gemini-1.5-pro",      2_097_152),
+    ("gemini-1.5-flash",    1_048_576),
+    ("gemini-pro",          32_768),
+    ("gemini",              1_048_576),
+    # Meta Llama
+    ("llama-3.3",           128_000),
+    ("llama-3.2",           128_000),
+    ("llama-3.1",           128_000),
+    ("llama-3",             8_192),
+    ("llama",               8_192),
+    # Mistral
+    ("mistral-large",       128_000),
+    ("mistral-medium",      32_000),
+    ("mistral-small",       32_000),
+    ("mixtral",             32_768),
+    ("mistral",             32_000),
+    # DeepSeek
+    ("deepseek-r1",         128_000),
+    ("deepseek-v3",         128_000),
+    ("deepseek-v2",         128_000),
+    ("deepseek",            64_000),
+    # Qwen
+    ("qwen",                128_000),
+]
+
+_DEFAULT_CONTEXT_WINDOW = 200_000
+
+
+def get_model_context_window(model_name: str) -> int:
+    """Return the context window size for a model name.
+
+    Checks known model families by substring match. Returns 200K default
+    if no match is found (safe assumption for modern models).
+    """
+    lower = model_name.lower()
+    # Strip common provider prefixes (e.g. "anthropic/claude-..." from OpenRouter)
+    for prefix in ("anthropic/", "openai/", "google/", "meta-llama/", "mistralai/", "deepseek/", "qwen/"):
+        if lower.startswith(prefix):
+            lower = lower[len(prefix):]
+            break
+
+    for pattern, window in _CONTEXT_WINDOW_MAP:
+        if pattern in lower:
+            return window
+
+    return _DEFAULT_CONTEXT_WINDOW

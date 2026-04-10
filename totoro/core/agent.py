@@ -300,11 +300,14 @@ def _build_custom_middleware(config: AgentConfig, store):
     # 1. Context Compaction — before_model: auto-compact when context usage is high
     #    Uses the lightweight model for intelligent summarization
     from totoro.layers.context_compaction import ContextCompactionMiddleware
+    from totoro.layers._token_utils import get_model_context_window
     compact_model = create_lightweight_model(config.fallback_model)
+    context_window = config.context.model_context_window or get_model_context_window(config.model)
     middleware_list.append(ContextCompactionMiddleware(
         auto_threshold=config.context.auto_compact_threshold,
         reactive_threshold=config.context.reactive_compact_threshold,
         emergency_threshold=config.context.emergency_compact_threshold,
+        model_context_window=context_window,
         model=compact_model,
     ))
 
