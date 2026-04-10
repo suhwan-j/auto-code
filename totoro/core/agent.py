@@ -357,7 +357,7 @@ def _build_full_middleware_stack(config, model, backend, store, hitl_config):
     # 8. Context Compaction — LLM-based auto-compact
     from totoro.layers.context_compaction import ContextCompactionMiddleware
     from totoro.layers._token_utils import get_model_context_window
-    compact_model = create_lightweight_model(config.fallback_model)
+    compact_model = create_lightweight_model(config.fallback_model, provider=_resolved_provider)
     context_window = config.context.model_context_window or get_model_context_window(config.model)
     middleware_list.append(ContextCompactionMiddleware(
         auto_threshold=config.context.auto_compact_threshold,
@@ -373,7 +373,7 @@ def _build_full_middleware_stack(config, model, backend, store, hitl_config):
 
     # 10. Auto-Dream Memory
     if config.memory.auto_extract:
-        lightweight_model = create_lightweight_model(config.fallback_model)
+        lightweight_model = create_lightweight_model(config.fallback_model, provider=_resolved_provider)
         character_file = CharacterFile()
         auto_dream = AutoDreamExtractor(
             model=lightweight_model,
