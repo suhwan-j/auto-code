@@ -19,7 +19,7 @@ _OPENROUTER_MODEL_MAP = {
 _LIGHTWEIGHT_MODELS = {
     "openrouter": "anthropic/claude-haiku-4-5",
     "anthropic": "claude-haiku-4-5-20251001",
-    "openai": "gpt-4o-mini",
+    "openai": "gpt-5.4-mini",
     "vllm": None,  # Uses whatever model is served
 }
 

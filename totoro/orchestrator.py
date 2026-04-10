@@ -449,9 +449,11 @@ def _run_parallel(tasks: list[dict], suppress_summary: bool = False) -> dict[str
     # Run curses TUI while processes execute
     if use_curses:
         # Suppress ANSI status panel rendering during curses mode
-        _tracker._panel_enabled = False
-        _tracker._clear_previous()
-        _tracker._last_panel_lines = 0
+        # Must hold lock to prevent race with render thread's stdout writes
+        with _tracker._lock:
+            _tracker._panel_enabled = False
+            _tracker._clear_previous()
+            _tracker._last_panel_lines = 0
 
         tui = SplitPaneTUI(tracker=_tracker, pane_manager=_pane_manager)
         try:
@@ -510,22 +512,58 @@ def _run_parallel(tasks: list[dict], suppress_summary: bool = False) -> dict[str
     except Exception:
         pass
 
-    # Print summary after curses exits (skip if auto-dispatch will call again)
+    # Disable panel BEFORE printing summary to prevent render thread race.
+    # Must hold lock so render thread can't write to stdout concurrently.
+    if _tracker:
+        with _tracker._lock:
+            _tracker._panel_enabled = False
+            _tracker._clear_previous()
+            _tracker._last_panel_lines = 0
+
+    # Enrich pane metadata from collected results so the summary
+    # includes per-agent file lists and a one-line description.
+    if _pane_manager:
+        for label, result in results.items():
+            if isinstance(result, SubagentResult):
+                with _pane_manager._lock:
+                    pane = _pane_manager.panes.get(label)
+                    if pane:
+                        if result.files_modified:
+                            pane.files = list(result.files_modified)
+                        # Extract first meaningful line as one-line summary
+                        if result.final_text:
+                            for line in result.final_text.strip().splitlines():
+                                line = line.strip()
+                                if line and not line.startswith(('#', '```', '---')):
+                                    pane.summary_text = line
+                                    break
+
+    # Print summary + file change list after panel is fully disabled.
     if _pane_manager:
         if not suppress_summary:
             summary = _pane_manager.get_summary()
             if summary:
                 from totoro.diff import safe_print
                 safe_print(summary)
+                # Collect and display deduplicated file paths from all subagents
+                all_files = []
+                for label, result in results.items():
+                    if isinstance(result, SubagentResult):
+                        for f in result.files_modified:
+                            all_files.append(f)
+                if all_files:
+                    from totoro.colors import BLUE, DIM, RESET
+                    import os
+                    unique_files = list(dict.fromkeys(all_files))
+                    for fp in unique_files[:10]:
+                        try:
+                            rel = os.path.relpath(fp)
+                        except ValueError:
+                            rel = fp
+                        safe_print(f"  {DIM}⎿{RESET} {BLUE}{rel}{RESET}")
+                    if len(unique_files) > 10:
+                        safe_print(f"  {DIM}  +{len(unique_files) - 10} more files{RESET}")
         _pane_manager.clear()
-
-    # Keep panel disabled — the main agent will continue processing
-    # and the render thread would show stale plan data otherwise.
-    # Panel re-enables naturally when _stream_with_hitl restarts the render thread.
-    if _tracker:
-        _tracker._panel_enabled = False
-        _tracker._clear_previous()
-        _tracker._last_panel_lines = 0
 
     return results
 
@@ -694,6 +732,12 @@ TASK_AGENT_RULES = """
 - Do NOT verify, review, or double-check your own work unless that IS your task.
 - STOP as soon as your assigned task is complete. Do not do extra work.
 
+## Error Handling
+- If a command fails, read the error output carefully and fix the root cause.
+- You may retry a failed command up to 3 times MAX. After 3 failures, STOP and report the error.
+- Do NOT keep retrying the same approach. If it failed twice, try a completely different approach.
+- NEVER loop endlessly — if you cannot fix it in 3 attempts, report what went wrong and stop.
+
 ## Shell Commands
 - The `execute` tool runs commands from the project root directory.
 - Each execute call is a separate subprocess — `cd` does NOT persist between calls.
@@ -787,18 +831,27 @@ def _run_subagent_in_process(
         middleware=middleware,
         checkpointer=MemorySaver(),
         name=character_name,
-    ).with_config({"recursion_limit": 200})
+    ).with_config({"recursion_limit": 2000})
 
     # Stream the subagent
     thread_id = f"sub-{label}-{os.getpid()}-{int(time.time() * 1000)}"
     config = {"configurable": {"thread_id": thread_id}}
-    input_payload = {"messages": [{"role": "user", "content": description}]}
+    # Provide filesystem context without biasing toward a specific directory.
+    # The task description (with injected user request) guides where to work.
+    from pathlib import Path as _Path
+    user_msg = (
+        f"Environment:\n"
+        f"- Home: {_Path.home()}\n"
+        f"- CLI project: {project_root}\n\n"
+        f"{description}"
+    )
+    input_payload = {"messages": [{"role": "user", "content": user_msg}]}
 
     result = SubagentResult()
     pending_ops: dict[str, dict] = {}
     empty_turns = 0
     max_empty_turns = 3
-    max_execution_seconds = 300  # 5 minute hard timeout per subagent
+    max_execution_seconds = 1800  # 30 min absolute safety net
     start_time = time.time()
 
     def emit(event_type: str, **data):
@@ -811,7 +864,7 @@ def _run_subagent_in_process(
 
     try:
         for event in subagent.stream(input_payload, config=config, stream_mode="updates"):
-            # Hard timeout check
+            # Absolute safety net — only triggers if truly stuck (30 min)
             if time.time() - start_time > max_execution_seconds:
                 result.final_text += f"\n[Subagent timed out after {max_execution_seconds}s]"
                 emit("error", text=f"Timed out after {max_execution_seconds}s")

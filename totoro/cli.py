@@ -77,7 +77,7 @@ def _banner(config=None, session_id: str = "") -> str:
         "       █████                 █████",
         "       █████                 █████",
         "        ███                   ███",
-        "          █████████████████████",
+        "         ███████████████████████",
         "       ███████████████████████████",
         "      █████╭ ╮█████████████╭ ╮█████",
         "     ╲█████╰●╯████ ⊙ ⊙ ████╰●╯█████╱",
@@ -270,6 +270,9 @@ def _run_interactive(agent, invoke_config: dict, session_manager=None,
 
         if not user_input:
             continue
+
+        # Echo user input (prompt bar was erased by erase_when_done)
+        print(f"{handler.prompt}{user_input}")
 
         # Handle /mode command
         if user_input.strip().lower() == "/mode":
@@ -568,18 +571,37 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
             _safe_print(text, flush=True, **kwargs)
             tracker._mark_dirty()
 
-    def _flush_text_buffer(buf, trk, print_fn, dim, reset):
-        """Flush buffered AI text to screen with ● > header."""
+    def _flush_text_buffer(buf, trk, print_fn, dim, reset, header=True):
+        """Flush buffered AI text to screen with markdown rendering.
+
+        Acquires the tracker lock, clears any active status panel, then
+        prints the buffered text with optional ``● >`` header prefix.
+        Text is rendered through the markdown-to-ANSI converter.
+
+        Args:
+            buf: List of text chunks accumulated from AI stream.
+            trk: StatusTracker instance (used for lock and panel clearing).
+            print_fn: Print function (typically ``_safe_print``).
+            dim: ANSI escape code for dim styling.
+            reset: ANSI escape code to reset styling.
+            header: If True, print blank line and ``● >`` prefix before text.
+                Set to False for subsequent flushes of the same response.
+        """
         if not buf:
             return
+        from totoro.markdown import render as _render_md
         with trk._lock:
             trk._got_ai_text = True
             trk._clear_previous()
             trk._last_panel_lines = 0
-            # Blank line for visual separation from subagent summary
-            print_fn("", flush=True)
-            print_fn(f"{dim}● > {reset}", end="", flush=True)
-            print_fn("".join(buf), end="", flush=True)
+            if header:
+                # Blank line for visual separation from subagent summary
+                print_fn("", flush=True)
+                print_fn(f"{dim}● > {reset}", end="", flush=True)
+            # Render markdown to ANSI-styled text
+            raw = "".join(buf)
+            rendered = _render_md(raw)
+            print_fn(rendered, end="", flush=True)
             trk._mark_dirty()
 
     try:
@@ -603,7 +625,7 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
                     if chunk_id and chunk_id != streaming_ai_id and streaming_ai_id is not None:
                         # New AI message — flush any buffered text from previous message
                         if _text_buffer and not _tool_call_seen:
-                            _flush_text_buffer(_text_buffer, tracker, _safe_print, _DIM, _RESET)
+                            _flush_text_buffer(_text_buffer, tracker, _safe_print, _DIM, _RESET, header=not ai_header_printed)
                             ai_header_printed = True
                             got_ai_response = True
                         _text_buffer.clear()
@@ -628,6 +650,9 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
                     # Tool call chunks — discard buffered text (it was "thinking")
                     if tool_call_chunks:
                         got_ai_response = True
+                        # Capture message ID even for tool-call-only messages
+                        # so subsequent new messages can be detected
+                        streaming_ai_id = getattr(msg_chunk, "id", None) or streaming_ai_id
                         if not _tool_call_seen:
                             _text_buffer.clear()  # Discard any pre-tool-call text
                             _tool_call_seen = True
@@ -649,6 +674,9 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
                         streaming_ai_id = None
                         _safe_print("", flush=True)  # newline
 
+                    # Reset so next AI text after tool results can be buffered
+                    _tool_call_seen = False
+
                     is_error = "error" in tool_content.lower()[:100]
 
                     if tool_call_id and tool_call_id in _pending_file_ops and not is_error:
@@ -667,7 +695,7 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
             # ── "updates" mode: node-level outputs (todos, full tool args) ──
             # Flush any buffered text — updates mean the AI message is complete
             if _text_buffer and not _tool_call_seen:
-                _flush_text_buffer(_text_buffer, tracker, _safe_print, _DIM, _RESET)
+                _flush_text_buffer(_text_buffer, tracker, _safe_print, _DIM, _RESET, header=not ai_header_printed)
                 ai_header_printed = True
                 got_ai_response = True
                 _text_buffer.clear()
@@ -739,13 +767,6 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
                             if tool_calls:
                                 got_ai_response = True
 
-        # Flush any remaining buffered text after stream ends
-        if _text_buffer and not _tool_call_seen:
-            _flush_text_buffer(_text_buffer, tracker, _safe_print, _DIM, _RESET)
-            ai_header_printed = True
-            got_ai_response = True
-            _text_buffer.clear()
-
     except Exception as e:
         with tracker._lock:
             tracker._clear_previous()
@@ -768,21 +789,47 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
             resp_text = sanitize_text(str(e.response.text))[:300]
             _safe_print(f"{_DIM}  Response: {resp_text}{_RESET}", flush=True)
 
-        # Fallback: try non-streaming invoke
+    # Flush any remaining buffered text (runs after both normal and exception paths)
+    if _text_buffer:
+        _flush_text_buffer(_text_buffer, tracker, _safe_print, _DIM, _RESET, header=not ai_header_printed)
+        ai_header_printed = True
+        got_ai_response = True
+        _text_buffer.clear()
+
+    # Fallback: if tool calls ran but no AI text was displayed (e.g. text was
+    # suppressed before orchestrate_tool and model didn't generate a summary),
+    # recover text from the final agent state.
+    if not tracker._got_ai_text:
         try:
-            result = agent.invoke(input_payload, config=config)
-            if not isinstance(result, dict):
-                result = {"messages": []}
-            messages = result.get("messages", [])
-            for msg in reversed(messages):
-                if hasattr(msg, "type") and msg.type == "ai" and msg.content:
-                    text = _extract_text(msg.content)
+            state = agent.get_state(config)
+            if state and state.values:
+                messages = state.values.get("messages", [])
+                # Find the last user message index
+                last_user_idx = -1
+                for i in range(len(messages) - 1, -1, -1):
+                    if hasattr(messages[i], "type") and messages[i].type == "human":
+                        last_user_idx = i
+                        break
+                # Only search AI messages after the last user message
+                recent = messages[last_user_idx + 1:] if last_user_idx >= 0 else []
+                for msg in reversed(recent):
+                    if not hasattr(msg, "type") or msg.type != "ai":
+                        continue
+                    content = getattr(msg, "content", "")
+                    has_tools = bool(getattr(msg, "tool_calls", []))
+                    text = _extract_text(content) if content else ""
+                    if has_tools and not text:
+                        continue
                     if text:
+                        from totoro.markdown import render as _render_md
+                        _safe_print(f"\n{_DIM}● > {_RESET}", end="", flush=True)
+                        _safe_print(_render_md(text), flush=True)
+                        ai_header_printed = True
+                        tracker._got_ai_text = True
                         got_ai_response = True
-                        _safe_print(text, flush=True)
                     break
-        except Exception as e2:
-            _safe_print(f"{_RED}[Fallback error] {sanitize_text(str(e2))}{_RESET}", flush=True)
+        except Exception:
+            pass
 
     # End streaming line if still open
     if ai_header_printed:

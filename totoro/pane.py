@@ -55,6 +55,7 @@ class PaneState:
     token_input: int = 0
     token_output: int = 0
     token_cached: int = 0
+    summary_text: str = ""  # First meaningful line from subagent final_text
 
     @property
     def elapsed(self) -> str:
@@ -204,10 +205,13 @@ class PaneManager:
                 if pane.token_input or pane.token_output:
                     from totoro.status import _format_tokens_detail
                     tok_str = f", {_format_tokens_detail(pane.token_input, pane.token_output, pane.token_cached)}"
-                parts.append(
+                line = (
                     f"  {icon} {_BOLD}{pane.label}{_RESET} "
                     f"({pane.elapsed}, {pane.tool_count} tools{files_str}{tok_str})"
                 )
+                parts.append(line)
+                if pane.summary_text:
+                    parts.append(f"   {_DIM}⎿ {pane.summary_text}{_RESET}")
             if parts:
                 return f"\n{_DIM}── Subagent Summary ──{_RESET}\n" + "\n".join(parts)
             return ""

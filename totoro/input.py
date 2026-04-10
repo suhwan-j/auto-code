@@ -106,6 +106,11 @@ class InputHandler:
             """Ctrl+J: insert newline for multiline input."""
             event.current_buffer.insert_text("\n")
 
+        @self._bindings.add("escape", "enter")
+        def _shift_enter(event):
+            """Shift+Enter (escape + enter sequence): insert newline."""
+            event.current_buffer.insert_text("\n")
+
         self._session = PromptSession(
             completer=SlashCompleter(),
             key_bindings=self._bindings,
@@ -113,6 +118,7 @@ class InputHandler:
             complete_while_typing=True,
             complete_in_thread=True,
             reserve_space_for_menu=0,
+            erase_when_done=True,
         )
 
     def cycle_mode(self) -> str:

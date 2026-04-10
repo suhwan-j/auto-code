@@ -316,9 +316,15 @@ class StatusTracker:
         if total_in or total_out:
             counters.append(_format_tokens_detail(total_in, total_out, total_cached))
         counter_str = f" {_DIM}{' · '.join(counters)}{_RESET}"
+        # Visible length of counter text (without ANSI codes)
+        counter_plain = " " + " · ".join(counters)
 
         spinner = _SPINNER[self._spinner_idx]
-        lines.append(f"{_DIM}── {_CYAN}{spinner} {self.agent_name}{_RESET} {phase_color}{self.phase}{_RESET}{counter_str} {_DIM}{'─' * max(0, width - 40)}{_RESET}")
+        # Calculate trailing dashes to fit exactly within terminal width
+        # Visible prefix: "── " + spinner + " " + agent + " " + phase + counter_plain + " "
+        prefix_len = 3 + 1 + 1 + len(self.agent_name) + 1 + len(self.phase) + len(counter_plain) + 1
+        trailing = max(0, width - prefix_len)
+        lines.append(f"{_DIM}── {_CYAN}{spinner} {self.agent_name}{_RESET} {phase_color}{self.phase}{_RESET}{counter_str} {_DIM}{'─' * trailing}{_RESET}")
 
         # ─── Plan ───
         if self.todos:

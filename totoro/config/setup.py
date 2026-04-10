@@ -23,11 +23,11 @@ PROVIDERS = [
 # Provider → available models
 _PROVIDER_MODELS = {
     "openrouter": [
-        ("z-ai/glm-5v-turbo", "GLM 5v Turbo", "default"),
+        ("z-ai/glm-5.1", "GLM 5.1", "default"),
+        ("z-ai/glm-5v-turbo", "GLM 5v Turbo", "vision & multimodal"),
         ("anthropic/claude-haiku-4-5", "Claude Haiku 4.5", "fast & cheap"),
-        ("openai/gpt-5.4-mini", "GPT-5.4 Mini", "fast"),
         ("google/gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash", "fast & cheap"),
-        ("qwen/qwen3.5-35b-a3b", "Qwen3.5 35B", "fuck"),
+        ("qwen/qwen3.5-35b-a3b", "Qwen3.5 35B", "open-source & efficient"),
     ],
     "anthropic": [
         ("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5", "recommended"),
@@ -81,16 +81,21 @@ def run_setup_wizard(project_root: Path = None) -> dict:
     # 3. Base URL (for openrouter / vllm)
     base_url = _enter_base_url(provider, existing)
 
-    # 4. Select model
+    # 4. Select main model
     model = _select_model(provider, existing)
+
+    # 5. Select lightweight model (for Auto-Dream, Context Compaction, Catbus planner)
+    fallback_model = _select_lightweight_model(provider, model, existing)
 
     settings = {"provider": provider, "api_key": api_key}
     if model:
         settings["model"] = model
+    if fallback_model:
+        settings["fallback_model"] = fallback_model
     if base_url:
         settings["base_url"] = base_url
 
-    # 5. Optional extras
+    # 6. Optional extras
     extras = _configure_extras(existing)
     if extras:
         settings["extras"] = extras
@@ -289,6 +294,75 @@ def _select_model(provider: str, existing: dict | None) -> str | None:
             print(f"  {_RED}1-{len(models)} 사이의 숫자 또는 'c'를 입력하세요.{_RESET}")
         except ValueError:
             print(f"  {_RED}1-{len(models)} 사이의 숫자 또는 'c'를 입력하세요.{_RESET}")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            raise SystemExit(0)
+
+
+def _select_lightweight_model(provider: str, main_model: str | None, existing: dict | None) -> str | None:
+    """Prompt user to select a lightweight model for auxiliary tasks.
+
+    Used for Auto-Dream memory extraction, Context Compaction, and
+    Catbus planner. If the user skips (Enter), the main model is used.
+
+    Args:
+        provider: Provider key string.
+        main_model: The selected main model ID.
+        existing: Existing settings dict for showing current selection, or None.
+
+    Returns:
+        Selected lightweight model ID, or None to use the main model.
+    """
+    models = _PROVIDER_MODELS.get(provider, [])
+    current = (existing or {}).get("fallback_model")
+    main_display = main_model or "none"
+
+    print(f"\n  Select lightweight model {_DIM}(Auto-Dream, Context Compaction){_RESET}:")
+    print(f"  {_DIM}Enter to use main model ({main_display}){_RESET}")
+    print()
+
+    if models:
+        for i, (model_id, display_name, note) in enumerate(models, 1):
+            marker = f" {_CYAN}← current{_RESET}" if model_id == current else ""
+            note_str = f" {_DIM}({note}){_RESET}" if note else ""
+            print(f"    {_BOLD}{i}){_RESET} {display_name:<22}{note_str}{marker}")
+        print(f"    {_BOLD}c){_RESET} {_DIM}Custom model ID...{_RESET}")
+        print()
+
+    while True:
+        try:
+            choice = input("  > ").strip()
+
+            # Enter = use main model
+            if not choice:
+                print(f"  {_GREEN}✓{_RESET} {_DIM}main model ({main_display}){_RESET}")
+                return None
+
+            if models:
+                if choice.lower() == "c":
+                    print(f"\n  Enter custom lightweight model ID:")
+                    custom = input("  > ").strip()
+                    if custom:
+                        print(f"  {_GREEN}✓{_RESET} {custom}")
+                        return custom
+                    continue
+
+                try:
+                    num = int(choice)
+                    if 1 <= num <= len(models):
+                        selected = models[num - 1][0]
+                        print(f"  {_GREEN}✓{_RESET} {selected}")
+                        return selected
+                    print(f"  {_RED}1-{len(models)} 사이의 숫자, 'c', 또는 Enter{_RESET}")
+                except ValueError:
+                    # Treat as custom model ID
+                    print(f"  {_GREEN}✓{_RESET} {choice}")
+                    return choice
+            else:
+                # No preset list (vLLM) — treat input as custom model name
+                print(f"  {_GREEN}✓{_RESET} {choice}")
+                return choice
+
         except (EOFError, KeyboardInterrupt):
             print()
             raise SystemExit(0)

@@ -443,7 +443,11 @@ class AutoDreamExtractor:
             user_message=user_message,
         )
         response = self._model.invoke([HumanMessage(content=prompt)])
-        entries = _parse_json_response(response.content)
+        raw = response.content if isinstance(response.content, str) else str(response.content)
+        entries = _parse_json_response(raw)
+
+        if not entries and raw.strip():
+            logger.debug(f"Auto-Dream: LLM returned non-JSON: {raw[:200]}")
 
         for entry in entries:
             self._store.put(entry)

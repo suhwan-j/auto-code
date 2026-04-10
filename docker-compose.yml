@@ -1,0 +1,15 @@
+services:
+  totoro:
+    build: .
+    container_name: totoro
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./:/workspace
+    environment:
+      - TERM=xterm-256color
+      - COLORTERM=truecolor
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - TAVILY_API_KEY=${TAVILY_API_KEY:-}

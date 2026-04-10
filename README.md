@@ -1,4 +1,4 @@
-# Totoro: 터미널 자율 코딩 에이전트 CLI
+# Totoro Code
 
 ![totoro.png](asset/cli_img.png)
 
@@ -6,7 +6,8 @@
 
 - **멀티 프로바이더** — OpenRouter, Anthropic, OpenAI, vLLM 지원 + 런타임 모델 전환
 - **병렬 서브에이전트** — catbus(플래너), satsuki(코더), mei(연구원), tatsuo(리뷰어), susuwatari(마이크로) 동시 실행
-- **실시간 상태 표시** — 서브에이전트 진행 상황, 도구 호출, 토큰 사용량 라이브 표시
+- **실시간 상태 표시** — 서브에이전트 진행 상황, 도구 호출, 토큰 사용량 라이브 표시 (터미널 너비 자동 맞춤)
+- **Markdown 렌더링** — AI 응답의 마크다운을 ANSI 스타일로 변환 (헤더, 볼드, 코드 블록, 리스트)
 - **세션 영구 저장** — SQLite 기반 체크포인터로 프로세스 재시작 후에도 세션 복원
 - **인라인 자동완성** — `/` 입력 시 드롭다운 메뉴로 커맨드 선택 (prompt_toolkit)
 - **HITL (Human-in-the-Loop)** — 위험한 도구 실행 전 승인/거부/수정 선택
@@ -27,24 +28,54 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-### Docker
+### Docker (빌드 & 실행)
+
+#### 빌드 스크립트로 한 번에
 
 ```bash
-docker build -t totoro .
-
-# 인터랙티브 모드
-docker run -it --rm \
-  -e OPENROUTER_API_KEY=sk-or-... \
-  -v ~/.totoro:/root/.totoro \
-  -v $(pwd):/workspace \
-  totoro
-
-# 단일 명령
-docker run --rm \
-  -e OPENROUTER_API_KEY=sk-or-... \
-  -v $(pwd):/workspace \
-  totoro -n "이 프로젝트를 분석해줘" --auto-approve
+./docker-build.sh
 ```
+
+빌드 후 bash 쉘로 접속됩니다. 컨테이너 안에서:
+
+```bash
+totoro                  # 대화형 모드 (setup부터 시작)
+ㄴ shift + tab을 통해 mode 변경 (auto-approve)
+
+totoro -n "분석해줘"     # 단일 명령 모드
+totoro --setup          # 셋업 초기화
+```
+
+#### 직접 실행
+
+```bash
+# 빌드
+docker compose build
+
+# bash 쉘로 접속
+docker compose run --rm totoro
+totoro
+
+# 또는 백그라운드 + exec
+docker compose up -d
+docker exec -it totoro bash
+docker compose down
+```
+
+#### 환경변수 (선택)
+
+API 키를 미리 환경변수로 설정하면 `--setup` 없이 바로 사용 가능:
+
+```bash
+OPENROUTER_API_KEY=sk-or-... docker compose run --rm totoro
+```
+
+| 변수 | 설명 |
+|------|------|
+| `OPENROUTER_API_KEY` | OpenRouter API 키 |
+| `ANTHROPIC_API_KEY` | Anthropic API 키 |
+| `OPENAI_API_KEY` | OpenAI API 키 |
+| `TAVILY_API_KEY` | Tavily 웹 검색 (선택) |
 
 ## 설정
 
@@ -148,14 +179,20 @@ totoro --auto-approve -n "테스트 실행하고 결과 알려줘"
 | reviewer | tatsuo | 테스트, 코드 리뷰, 품질 검증 | ls, read_file, glob, grep, execute |
 | micro | susuwatari | 단일 파일 수정, atomic 작업 | 전체 |
 
-서브에이전트 실행 중 요약이 표시됩니다:
+서브에이전트 실행 중 요약이 표시됩니다. 각 에이전트 결과의 한 줄 요약과 수정된 파일 목록도 함께 표시:
 
 ```
 ── Subagent Summary ──
-  ✓ satsuki-0 (25s, 8 tools)
-  ✓ mei-0 (13s, 3 tools)
-● > 프로젝트 구조를 생성하고 의존성을 설치했습니다.
-── Done (Tools: 6 · Subagents: 2 · ↑ 6.2k ↓ 105 tokens) ─────────────────────
+  ✓ mei-0 (8s, 14 tools, ↑ 57k ↓ 571 tokens)
+   ⎿ The frontend uses React 19 with Vite, main entry at src/App.tsx
+  ✓ satsuki-1 (32s, 7 tools, 3 files, ↑ 19k ↓ 5.8k tokens)
+   ⎿ Applied card-based layout with improved typography and spacing
+  ⎿ ../todo-app/frontend/src/App.tsx
+  ⎿ ../todo-app/frontend/src/index.css
+  ⎿ ../todo-app/frontend/src/styles.css
+
+● > 프론트 디자인 바꿔뒀습니다.
+── Done (Tools: 58 · Subagents: 6 · ↑ 5.4k ↓ 83 tokens) ─────────────────────
 ```
 
 ### Auto-Dispatch
@@ -163,10 +200,11 @@ totoro --auto-approve -n "테스트 실행하고 결과 알려줘"
 catbus만 디스패치하면 자동으로 플랜 생성 → 실행 에이전트 배치까지 진행:
 
 ```
-1. orchestrate_tool → catbus (플랜 생성)
+1. orchestrate_tool → catbus (플랜 생성, SLM 사용)
 2. catbus 플랜 JSON 파싱
-3. 실행 에이전트에 원래 유저 요청 + 플랜 컨텍스트 자동 주입
-4. 병렬 실행 → 결과 반환
+3. 실행 에이전트에 원래 유저 요청 + 플랜 컨텍스트 + 환경 정보 자동 주입
+4. 병렬 실행 (코드 변경 플랜은 반드시 tatsuo 검증 포함)
+5. 서브에이전트 요약 + 수정 파일 목록 출력 → 결과 반환
 ```
 
 ## HITL (Human-in-the-Loop)
@@ -253,9 +291,11 @@ catbus만 디스패치하면 자동으로 플랜 생성 → 실행 에이전트 
 totoro/
 ├── cli.py                    # CLI 진입점 + 대화형 메인 루프
 ├── orchestrator.py           # 병렬 서브에이전트 실행 (multiprocessing)
+├── markdown.py               # Markdown→ANSI 렌더러 (AI 응답 스타일링)
 ├── status.py                 # 실시간 상태 표시 (↑/↓ 토큰 표시)
-├── pane.py                   # 서브에이전트 패널 상태
+├── pane.py                   # 서브에이전트 패널 상태 + 결과 요약
 ├── tui.py                    # curses 기반 split-pane TUI
+├── input.py                  # prompt_toolkit 기반 입력 핸들러
 ├── core/
 │   ├── agent.py              # create_agent() 기반 에이전트 생성
 │   └── models.py             # LLM 프로바이더 초기화

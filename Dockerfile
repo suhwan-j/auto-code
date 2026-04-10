@@ -18,11 +18,8 @@ RUN pip install --no-cache-dir -e . 2>/dev/null || true
 COPY . .
 RUN pip install --no-cache-dir -e .
 
-# Create totoro config directory
-RUN mkdir -p /root/.totoro
-
 # Default working directory for user projects (mounted at runtime)
 WORKDIR /workspace
 
-# Entry point
-ENTRYPOINT ["totoro"]
+# Start bash shell — user runs 'totoro' or 'totoro --setup' manually
+CMD ["bash"]

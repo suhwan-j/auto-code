@@ -99,7 +99,12 @@ SUBAGENT_CONFIGS: list[SubAgent] = [
             "## Agent Assignment Guide\n"
             "- 'satsuki': Complex code implementation, multi-file changes, build/test setup (can handle MANY files in one task)\n"
             "- 'mei': Codebase exploration, web research, pattern discovery (read-only)\n"
+            "- 'tatsuo': Code review, run tests/build/lint, verify changes work correctly\n"
             "- 'susuwatari': ONLY for truly simple, single atomic operation — one file edit, one command\n\n"
+            "## MANDATORY: Verification\n"
+            "- Every plan that modifies code MUST end with a 'tatsuo' verification task.\n"
+            "- Tatsuo runs tests, builds, and lints to confirm changes are correct.\n"
+            "- NEVER skip verification — broken code is worse than slow delivery.\n\n"
             "## Output Format (MANDATORY)\n"
             "Your response MUST end with a JSON plan block like this:\n"
             "```plan\n"
@@ -123,7 +128,8 @@ SUBAGENT_CONFIGS: list[SubAgent] = [
             "- Use edit_file for targeted modifications\n"
             "- Use execute to run shell commands (install packages, build, test)\n"
             "- Follow existing code style and conventions\n"
-            "- You are thorough and reliable — verify your work when possible"
+            "- After making changes, ALWAYS verify: run build, test, or lint to confirm nothing is broken\n"
+            "- If a build or test fails, fix the issue before finishing"
         ),
     },
     {
@@ -233,7 +239,8 @@ def create_totoro_agent(config: AgentConfig):
     store = InMemoryStore()
 
     system_prompt = _build_system_prompt(config)
-    model = _resolve_model(config.model, config.provider)
+    _fb = config.fallback_model if config.fallback_model != "claude-haiku-4-5-20251001" else None
+    model = _resolve_model(config.model, config.provider, fallback_model=_fb)
 
     # Build parallel subagent instances for orchestrator
     _build_orchestrator_subagents(model, config)
@@ -358,7 +365,9 @@ def _build_full_middleware_stack(config, model, backend, store, hitl_config):
     # 8. Context Compaction — LLM-based auto-compact
     from totoro.layers.context_compaction import ContextCompactionMiddleware
     from totoro.layers._token_utils import get_model_context_window
-    compact_model = create_lightweight_model(config.fallback_model, provider=_resolved_provider)
+    # Use fallback_model if explicitly set, otherwise reuse the main model
+    _lightweight_name = config.fallback_model if config.fallback_model != "claude-haiku-4-5-20251001" else config.model
+    compact_model = create_lightweight_model(_lightweight_name, provider=_resolved_provider)
     context_window = config.context.model_context_window or get_model_context_window(config.model)
     middleware_list.append(ContextCompactionMiddleware(
         auto_threshold=config.context.auto_compact_threshold,
@@ -374,7 +383,8 @@ def _build_full_middleware_stack(config, model, backend, store, hitl_config):
 
     # 10. Auto-Dream Memory
     if config.memory.auto_extract:
-        lightweight_model = create_lightweight_model(config.fallback_model, provider=_resolved_provider)
+        _lw_name = config.fallback_model if config.fallback_model != "claude-haiku-4-5-20251001" else config.model
+        lightweight_model = create_lightweight_model(_lw_name, provider=_resolved_provider)
         character_file = CharacterFile()
         auto_dream = AutoDreamExtractor(
             model=lightweight_model,
@@ -430,15 +440,22 @@ def _build_orchestrator_subagents(model, config: AgentConfig):
     )
 
 
-def _resolve_model(model_name: str, provider: str = "auto"):
+def _resolve_model(model_name: str, provider: str = "auto", fallback_model: str | None = None):
     """Resolve model — supports OpenRouter, Anthropic, OpenAI, and vLLM.
+
+    Tries the main model first. If creation fails and a fallback_model is
+    provided, retries with the fallback model before raising an error.
 
     Args:
         model_name: Model name/identifier.
         provider: "auto" to detect from env, or explicit provider name.
+        fallback_model: Optional fallback model name to try if main model fails.
 
     Returns:
         LLM model instance. Also sets _resolved_provider as side-effect for orchestrator.
+
+    Raises:
+        RuntimeError: If neither main nor fallback model could be resolved.
     """
     global _resolved_provider
 
@@ -454,6 +471,11 @@ def _resolve_model(model_name: str, provider: str = "auto"):
         if factory is None:
             raise RuntimeError(f"Unknown provider: {provider}")
         model = factory(model_name)
+        if model is None and fallback_model and fallback_model != model_name:
+            import sys as _sys
+            print(f"  [info] Main model '{model_name}' unavailable, trying fallback '{fallback_model}'",
+                  file=_sys.stderr, flush=True)
+            model = factory(fallback_model)
         if model is None:
             raise RuntimeError(f"Provider '{provider}' is not configured. Run `totoro --setup` to configure.")
         _resolved_provider = provider
@@ -465,6 +487,17 @@ def _resolve_model(model_name: str, provider: str = "auto"):
         if model is not None:
             _resolved_provider = prov_name
             return model
+
+    # Try fallback model across all providers
+    if fallback_model and fallback_model != model_name:
+        import sys as _sys
+        print(f"  [info] Main model '{model_name}' unavailable, trying fallback '{fallback_model}'",
+              file=_sys.stderr, flush=True)
+        for prov_name, factory in providers.items():
+            model = factory(fallback_model)
+            if model is not None:
+                _resolved_provider = prov_name
+                return model
 
     raise RuntimeError(
         "No API key found. Run `totoro --setup` to configure your provider."
