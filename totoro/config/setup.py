@@ -55,7 +55,14 @@ _EXTRAS_ENV_MAP = {
 
 
 def run_setup_wizard(project_root: Path = None) -> dict:
-    """Run interactive setup wizard. Saves to ~/.totoro/settings.json."""
+    """Run interactive setup wizard. Saves to ~/.totoro/settings.json.
+
+    Args:
+        project_root: Optional project root path (currently unused).
+
+    Returns:
+        Dict of saved settings including provider, api_key, model, etc.
+    """
     print()
     print(f"  {_DIM}╭─────────────────────────────────────╮{_RESET}")
     print(f"  {_DIM}│  {ACCENT}Totoro Setup{_DIM}                         │{_RESET}")
@@ -99,6 +106,14 @@ def run_setup_wizard(project_root: Path = None) -> dict:
 
 
 def _select_provider(existing: dict | None) -> str:
+    """Prompt user to select an LLM provider interactively.
+
+    Args:
+        existing: Existing settings dict for showing current selection, or None.
+
+    Returns:
+        Selected provider key string (e.g. "openrouter", "anthropic").
+    """
     current = existing.get("provider") if existing else None
     print(f"  Select your LLM provider:")
     print()
@@ -132,6 +147,15 @@ def _select_provider(existing: dict | None) -> str:
 
 
 def _enter_api_key(provider: str, existing: dict | None) -> str:
+    """Prompt user to enter an API key for the selected provider.
+
+    Args:
+        provider: Provider key string.
+        existing: Existing settings dict for showing masked current key, or None.
+
+    Returns:
+        API key string.
+    """
     current_key = existing.get("api_key") if existing else None
     masked = f"{current_key[:8]}...{current_key[-4:]}" if current_key and len(current_key) > 12 else None
 
@@ -153,6 +177,15 @@ def _enter_api_key(provider: str, existing: dict | None) -> str:
 
 
 def _enter_base_url(provider: str, existing: dict | None) -> str | None:
+    """Prompt user to enter a base URL for providers that require one.
+
+    Args:
+        provider: Provider key string.
+        existing: Existing settings dict for showing current URL, or None.
+
+    Returns:
+        Base URL string, or None if the provider doesn't need one.
+    """
     if provider == "openrouter":
         default = "https://openrouter.ai/api/v1"
         current = (existing or {}).get("base_url", default)
@@ -184,7 +217,15 @@ def _enter_base_url(provider: str, existing: dict | None) -> str | None:
 
 
 def _select_model(provider: str, existing: dict | None) -> str | None:
-    """Show available models for the selected provider and let user pick one."""
+    """Show available models for the selected provider and let user pick one.
+
+    Args:
+        provider: Provider key string.
+        existing: Existing settings dict for showing current model, or None.
+
+    Returns:
+        Selected model ID string, or None if no model was chosen.
+    """
     models = _PROVIDER_MODELS.get(provider, [])
 
     if not models:
@@ -254,6 +295,14 @@ def _select_model(provider: str, existing: dict | None) -> str | None:
 
 
 def _configure_extras(existing: dict | None) -> dict:
+    """Prompt user to configure optional extras like Tavily API key.
+
+    Args:
+        existing: Existing settings dict for showing current extras, or None.
+
+    Returns:
+        Dict of configured extras.
+    """
     extras = {}
     existing_extras = (existing or {}).get("extras", {})
 
@@ -281,7 +330,12 @@ def _configure_extras(existing: dict | None) -> dict:
 
 
 def save_settings(settings: dict, project_root: Path = None):
-    """Save settings to ~/.totoro/settings.json."""
+    """Save settings to ~/.totoro/settings.json.
+
+    Args:
+        settings: Settings dict to persist.
+        project_root: Optional project root path (currently unused).
+    """
     totoro_dir = Path.home() / ".totoro"
     totoro_dir.mkdir(parents=True, exist_ok=True)
 
@@ -305,7 +359,14 @@ def save_settings(settings: dict, project_root: Path = None):
 
 
 def load_provider_settings(project_root: Path = None) -> dict | None:
-    """Load settings from ~/.totoro/settings.json. Returns None if not found."""
+    """Load settings from ~/.totoro/settings.json.
+
+    Args:
+        project_root: Optional project root path (currently unused).
+
+    Returns:
+        Settings dict if found and valid, None otherwise.
+    """
     settings_path = Path.home() / ".totoro" / "settings.json"
     if not settings_path.exists():
         return None
@@ -321,7 +382,11 @@ def load_provider_settings(project_root: Path = None) -> dict | None:
 
 
 def inject_env_from_settings(settings: dict):
-    """Inject settings into os.environ so existing provider factories work unchanged."""
+    """Inject settings into os.environ so existing provider factories work unchanged.
+
+    Args:
+        settings: Settings dict with provider, api_key, base_url, and extras.
+    """
     provider = settings.get("provider")
     api_key = settings.get("api_key")
     base_url = settings.get("base_url")
@@ -346,7 +411,11 @@ def inject_env_from_settings(settings: dict):
 
 
 def ensure_gitignore(project_root: Path):
-    """Add .totoro/settings.json to .gitignore if not already present."""
+    """Add .totoro/settings.json to .gitignore if not already present.
+
+    Args:
+        project_root: Path to the project root containing .gitignore.
+    """
     gitignore_path = project_root / ".gitignore"
     entry = ".totoro/settings.json"
 

@@ -10,12 +10,24 @@ class StallDetector:
     """Detect agent stalls and escalate recovery."""
 
     def __init__(self, max_empty_turns: int = 3):
+        """Initialize the stall detector.
+
+        Args:
+            max_empty_turns: Number of consecutive empty turns before recovery.
+        """
         self._max_empty_turns = max_empty_turns
         self._consecutive_empty = 0
         self._recovery_stage = 0
 
     def check(self, last_message) -> dict | None:
-        """Check if agent is stalled. Returns recovery action or None."""
+        """Check if agent is stalled and determine recovery action.
+
+        Args:
+            last_message: The most recent message from the agent.
+
+        Returns:
+            A recovery action dict, or None if no stall detected.
+        """
         has_tool_calls = hasattr(last_message, "tool_calls") and last_message.tool_calls
 
         if has_tool_calls:
@@ -57,6 +69,11 @@ class StallDetectorMiddleware(AgentMiddleware):
     """Middleware wrapper for StallDetector — runs after each model call."""
 
     def __init__(self, max_empty_turns: int = 3):
+        """Initialize the stall detector middleware.
+
+        Args:
+            max_empty_turns: Number of consecutive empty turns before recovery.
+        """
         self._detector = StallDetector(max_empty_turns=max_empty_turns)
 
     @property
@@ -64,6 +81,15 @@ class StallDetectorMiddleware(AgentMiddleware):
         return "StallDetectorMiddleware"
 
     def after_model(self, state, runtime) -> dict[str, Any] | None:
+        """Check for agent stall and inject recovery message if needed.
+
+        Args:
+            state: Current agent state containing messages.
+            runtime: Middleware runtime context.
+
+        Returns:
+            Dict with recovery messages, or None if no stall detected.
+        """
         messages = state.get("messages", []) if isinstance(state, dict) else getattr(state, "messages", [])
         if not messages:
             return None

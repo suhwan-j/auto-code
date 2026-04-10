@@ -116,13 +116,21 @@ class InputHandler:
         )
 
     def cycle_mode(self) -> str:
-        """Cycle to next mode and return the new mode name."""
+        """Cycle to next mode and return the new mode name.
+
+        Returns:
+            The newly active mode name.
+        """
         idx = MODES.index(self.mode)
         self.mode = MODES[(idx + 1) % len(MODES)]
         return self.mode
 
     def mode_top_bar(self) -> str:
-        """Top bar:  ──────────── DEFAULT ──  with colored bg label and themed line."""
+        """Build the top bar with colored bg label and themed line.
+
+        Returns:
+            ANSI-formatted top bar string.
+        """
         import shutil
         width = shutil.get_terminal_size().columns
         bg_style, line_color, line_char = MODE_THEME.get(self.mode, (_BG_BLUE, _DIM, "─"))
@@ -133,7 +141,11 @@ class InputHandler:
         return f"{line_color}{line_char * max(0, pad)}{_RESET} {bg_style}{label}{_RESET} {line_color}{line_char * 2}{_RESET}"
 
     def mode_bottom_bar(self) -> str:
-        """Bottom bar: themed separator line."""
+        """Build the bottom bar themed separator line.
+
+        Returns:
+            ANSI-formatted bottom bar string.
+        """
         import shutil
         width = shutil.get_terminal_size().columns
         _, line_color, line_char = MODE_THEME.get(self.mode, (_BG_BLUE, _DIM, "─"))
@@ -141,7 +153,11 @@ class InputHandler:
 
     @property
     def prompt_html(self) -> HTML:
-        """Build prompt as HTML with top bar included for live mode switching."""
+        """Build prompt as HTML with top bar included for live mode switching.
+
+        Returns:
+            HTML formatted prompt with mode bar and input indicator.
+        """
         import shutil
         width = shutil.get_terminal_size().columns
         _, _, line_char = MODE_THEME.get(self.mode, (_BG_BLUE, DIM, "─"))
@@ -162,7 +178,11 @@ class InputHandler:
 
     @property
     def prompt(self) -> str:
-        """Plain ANSI prompt string (for non-prompt_toolkit contexts)."""
+        """Plain ANSI prompt string (for non-prompt_toolkit contexts).
+
+        Returns:
+            ANSI-colored prompt string with mode icon.
+        """
         icon = MODE_ICONS.get(self.mode, "◆")
         color = {"default": BLUE, "auto-approve": AMBER, "plan-only": IVORY}.get(self.mode, BLUE)
         return f"{color}{_BOLD}{icon} > {_RESET}"
@@ -209,7 +229,8 @@ class InputHandler:
 def pick_command() -> str | None:
     """Show a numbered menu of slash commands (fallback).
 
-    Returns the selected command string (e.g. "/model") or None if cancelled.
+    Returns:
+        The selected command string (e.g. "/model") or None if cancelled.
     """
     from totoro.commands.registry import COMMAND_LIST
     from totoro.colors import DIM as _D, BLUE as _B, AMBER as _A, BODY as _BT, RESET as _R, BOLD as _BO
@@ -251,7 +272,11 @@ def pick_command() -> str | None:
 
 
 def format_mode_help() -> str:
-    """Format mode descriptions for /help output."""
+    """Format mode descriptions for /help output.
+
+    Returns:
+        Multi-line string describing available modes and how to switch.
+    """
     from totoro.colors import BOLD as _BO, RESET as _R
     lines = [
         f"  {_BO}Modes{_R} (cycle with {_BO}Shift+Tab{_R} or {_BO}/mode{_R}):",

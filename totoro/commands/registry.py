@@ -14,25 +14,41 @@ _skill_manager = None  # SkillManager instance
 
 
 def set_session_manager(manager):
-    """Inject session manager for /session commands."""
+    """Inject session manager for /session commands.
+
+    Args:
+        manager: SessionManager instance.
+    """
     global _session_manager
     _session_manager = manager
 
 
 def set_auto_dream(extractor):
-    """Inject auto-dream extractor for /memory commands."""
+    """Inject auto-dream extractor for /memory commands.
+
+    Args:
+        extractor: AutoDream extractor instance.
+    """
     global _auto_dream
     _auto_dream = extractor
 
 
 def set_agent_config(config):
-    """Inject AgentConfig for /model command."""
+    """Inject AgentConfig for /model command.
+
+    Args:
+        config: AgentConfig instance.
+    """
     global _agent_config
     _agent_config = config
 
 
 def set_skill_manager(manager):
-    """Inject SkillManager for /skill commands."""
+    """Inject SkillManager for /skill commands.
+
+    Args:
+        manager: SkillManager instance.
+    """
     global _skill_manager
     _skill_manager = manager
 
@@ -57,12 +73,25 @@ COMMAND_LIST = [
 
 
 def get_command_names() -> list[str]:
-    """Return list of command names for autocomplete."""
+    """Return list of command names for autocomplete.
+
+    Returns:
+        List of slash command name strings.
+    """
     return [cmd for cmd, _ in COMMAND_LIST]
 
 
 def handle_slash_command(user_input: str, agent, invoke_config: dict) -> str | None:
-    """Parse and execute a slash command. Returns output string, '__exit__', or None."""
+    """Parse and execute a slash command.
+
+    Args:
+        user_input: Raw user input string starting with '/'.
+        agent: The LangGraph agent instance.
+        invoke_config: LangGraph invoke config dict with thread_id.
+
+    Returns:
+        Output string, '__exit__' sentinel, or None for unknown commands.
+    """
     parts = user_input.strip().split(maxsplit=1)
     cmd = parts[0].lower()
     args = parts[1] if len(parts) > 1 else ""
@@ -265,7 +294,16 @@ def _cmd_session(args, agent, config) -> str:
 
 
 def _switch_session(target: str, agent, config) -> str:
-    """Switch to another session by ID or list number."""
+    """Switch to another session by ID or list number.
+
+    Args:
+        target: Session ID, prefix, or 1-based list number.
+        agent: The LangGraph agent instance.
+        config: LangGraph invoke config dict.
+
+    Returns:
+        Status message describing the switch result.
+    """
     if _session_manager is None:
         return "Session manager not available."
 

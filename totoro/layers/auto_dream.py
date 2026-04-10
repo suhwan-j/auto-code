@@ -127,6 +127,11 @@ class CharacterFile:
     """
 
     def __init__(self, path: str | Path | None = None):
+        """Initialize the character file store.
+
+        Args:
+            path: Path to the character.md file. Defaults to ~/.totoro/character.md.
+        """
         if path is None:
             base = Path.home() / ".totoro"
             base.mkdir(parents=True, exist_ok=True)
@@ -135,7 +140,11 @@ class CharacterFile:
         self._lock = threading.Lock()
 
     def put(self, entry: dict) -> None:
-        """Insert or update a memory entry. Upserts by (type, name)."""
+        """Insert or update a memory entry. Upserts by (type, name).
+
+        Args:
+            entry: Dict with 'type', 'name', and 'content' keys.
+        """
         mtype = entry.get("type", "user")
         name = entry.get("name", "info")
         content = entry.get("content", "")
@@ -158,6 +167,14 @@ class CharacterFile:
         return result
 
     def get_by_type(self, memory_type: str) -> list[dict]:
+        """Get memories filtered by type.
+
+        Args:
+            memory_type: The memory type to filter by.
+
+        Returns:
+            List of memory dicts matching the given type.
+        """
         with self._lock:
             data = self._read()
         entries = data.get(memory_type, {})
@@ -174,7 +191,15 @@ class CharacterFile:
                 self._path.unlink()
 
     def remove(self, memory_type: str, name: str) -> bool:
-        """Remove a specific memory by type and name. Returns True if found."""
+        """Remove a specific memory by type and name.
+
+        Args:
+            memory_type: The memory type category.
+            name: The memory entry name.
+
+        Returns:
+            True if the entry was found and removed, False otherwise.
+        """
         with self._lock:
             data = self._read()
             entries = data.get(memory_type, {})
@@ -185,7 +210,14 @@ class CharacterFile:
         return False
 
     def remove_by_index(self, index: int) -> dict | None:
-        """Remove a memory by its display index (1-based). Returns removed entry or None."""
+        """Remove a memory by its display index (1-based).
+
+        Args:
+            index: 1-based display index of the memory to remove.
+
+        Returns:
+            The removed entry dict, or None if index is out of range.
+        """
         all_entries = self.get_all()
         if 1 <= index <= len(all_entries):
             entry = all_entries[index - 1]
@@ -194,7 +226,11 @@ class CharacterFile:
         return None
 
     def trim(self, max_entries: int) -> None:
-        """Keep only the last max_entries per type."""
+        """Keep only the last max_entries per type.
+
+        Args:
+            max_entries: Maximum number of entries to retain per type.
+        """
         with self._lock:
             data = self._read()
             for mtype in data:
@@ -269,6 +305,13 @@ class AutoDreamExtractor:
     """
 
     def __init__(self, model=None, config=None, store: CharacterFile | None = None):
+        """Initialize the Auto-Dream memory extractor.
+
+        Args:
+            model: Lightweight LLM for extraction (e.g. Haiku).
+            config: Agent configuration with memory thresholds.
+            store: Persistent memory store. Defaults to a new CharacterFile.
+        """
         self._model = model
         self._store = store or CharacterFile()
         self._last_extraction_token_count = 0
@@ -291,7 +334,15 @@ class AutoDreamExtractor:
         self._turn_threshold = 3
 
     def should_extract(self, current_token_count: int, tool_count: int) -> bool:
-        """Check if extraction thresholds are met."""
+        """Check if extraction thresholds are met.
+
+        Args:
+            current_token_count: Current total token count in conversation.
+            tool_count: Current total tool call count in conversation.
+
+        Returns:
+            True if any extraction threshold (token, tool, or turn) is met.
+        """
         token_delta = current_token_count - self._last_extraction_token_count
         tool_delta = tool_count - self._last_extraction_tool_count
         turn_delta = self._turn_count - self._last_extraction_turn
@@ -304,7 +355,11 @@ class AutoDreamExtractor:
     def extract(self, messages: list) -> list[dict]:
         """Extract memories from recent messages using the lightweight LLM.
 
-        Returns list of extracted memory entries.
+        Args:
+            messages: Conversation message list to extract from.
+
+        Returns:
+            List of extracted memory entry dicts.
         """
         if self._model is None:
             return []
@@ -344,6 +399,9 @@ class AutoDreamExtractor:
 
         Analysis happens later in after_model (after main model responds),
         to avoid concurrent API calls competing with the main model.
+
+        Args:
+            user_message: The user's input message text.
         """
         self._turn_count += 1
         # Save for deferred analysis in after_model
@@ -353,7 +411,11 @@ class AutoDreamExtractor:
             self._pending_user_message = None
 
     def _analyze_user_message_deferred(self, user_message: str) -> None:
-        """Run user message analysis in background thread (called from after_model)."""
+        """Run user message analysis in background thread (called from after_model).
+
+        Args:
+            user_message: The user message text to analyze.
+        """
         def _bg():
             try:
                 self._analyze_user_message(user_message)
@@ -364,7 +426,14 @@ class AutoDreamExtractor:
         thread.start()
 
     def _analyze_user_message(self, user_message: str) -> list[dict]:
-        """Analyze a single user message for personal facts using lightweight LLM."""
+        """Analyze a single user message for personal facts using lightweight LLM.
+
+        Args:
+            user_message: The user message text to analyze.
+
+        Returns:
+            List of extracted memory entry dicts.
+        """
         existing_text = self._format_existing_memories()
 
         from langchain_core.messages import HumanMessage
@@ -386,7 +455,13 @@ class AutoDreamExtractor:
         return entries
 
     def maybe_extract_async(self, messages: list, current_token_count: int, tool_count: int) -> None:
-        """Check thresholds and extract in background thread if needed."""
+        """Check thresholds and extract in background thread if needed.
+
+        Args:
+            messages: Current conversation message list.
+            current_token_count: Current total token count.
+            tool_count: Current total tool call count.
+        """
         if not self.should_extract(current_token_count, tool_count):
             return
 
@@ -416,6 +491,10 @@ class AutoDreamExtractor:
 
         Reads the full conversation from agent state and extracts any
         remaining memories that didn't hit the threshold during the session.
+
+        Args:
+            agent: The agent instance to read state from.
+            config: LangGraph config dict with thread_id for state lookup.
         """
         if self._model is None:
             return
@@ -433,7 +512,14 @@ class AutoDreamExtractor:
         return self._store.get_all()
 
     def get_memories_by_type(self, memory_type: str) -> list[dict]:
-        """Get memories filtered by type."""
+        """Get memories filtered by type.
+
+        Args:
+            memory_type: The memory type to filter by.
+
+        Returns:
+            List of memory dicts matching the given type.
+        """
         return self._store.get_by_type(memory_type)
 
     def get_memory_count(self) -> int:
@@ -456,6 +542,9 @@ class AutoDreamExtractor:
         Args:
             max_per_type: Override max entries per type. None = use configured
                           max_memory_entries divided by number of types.
+
+        Returns:
+            Formatted markdown string of memories, or empty string if none.
         """
         if self._cached_memories is None:
             self._cached_memories = self._store.get_all()
@@ -525,7 +614,14 @@ class AutoDreamExtractor:
         return "\n".join(lines)
 
     def remove_memory_by_index(self, index: int) -> dict | None:
-        """Remove a memory by display index (1-based)."""
+        """Remove a memory by display index (1-based).
+
+        Args:
+            index: 1-based display index of the memory to remove.
+
+        Returns:
+            The removed entry dict, or None if index is out of range.
+        """
         return self._store.remove_by_index(index)
 
     def clear(self):
@@ -542,6 +638,11 @@ class AutoDreamMiddleware(AgentMiddleware):
     """
 
     def __init__(self, extractor: AutoDreamExtractor):
+        """Initialize the Auto-Dream middleware.
+
+        Args:
+            extractor: The AutoDreamExtractor instance to delegate to.
+        """
         self._extractor = extractor
 
     @property
@@ -553,10 +654,18 @@ class AutoDreamMiddleware(AgentMiddleware):
     # add_messages reducer would append instead of replace.
 
     def after_model(self, state, runtime) -> dict[str, Any] | None:
-        """After main model responds:
+        """Trigger async memory extraction after main model responds.
+
         1. Analyze pending user message for personal facts (deferred from on_turn)
         2. Check thresholds for full conversation extraction
-        Both run async in background threads — no blocking.
+        Both run async in background threads -- no blocking.
+
+        Args:
+            state: Current agent state containing messages.
+            runtime: Middleware runtime context.
+
+        Returns:
+            Always None (extraction is async and does not modify state).
         """
         messages = state.get("messages", []) if isinstance(state, dict) else getattr(state, "messages", [])
 
@@ -575,7 +684,14 @@ class AutoDreamMiddleware(AgentMiddleware):
 
 
 def _format_messages(messages: list) -> str:
-    """Format message list as text for the extraction prompt."""
+    """Format message list as text for the extraction prompt.
+
+    Args:
+        messages: Messages to format.
+
+    Returns:
+        Formatted text with role-prefixed lines, each truncated to 500 chars.
+    """
     lines = []
     for m in messages:
         role = getattr(m, "type", "unknown")
@@ -594,7 +710,14 @@ def _format_messages(messages: list) -> str:
 
 
 def _parse_json_response(text: str) -> list[dict]:
-    """Extract JSON array from LLM response."""
+    """Extract JSON array from LLM response.
+
+    Args:
+        text: Raw LLM response text containing a JSON array.
+
+    Returns:
+        Parsed list of dicts, or empty list on parse failure.
+    """
     try:
         start = text.index("[")
         end = text.rindex("]") + 1

@@ -34,7 +34,11 @@ def _load_session_index() -> dict[str, SessionInfo]:
 
 
 def _save_session_index(sessions: dict[str, SessionInfo]):
-    """Persist session metadata to disk."""
+    """Persist session metadata to disk.
+
+    Args:
+        sessions: Dict mapping session IDs to SessionInfo instances.
+    """
     try:
         _SESSION_INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
         data = {
@@ -63,11 +67,24 @@ class SessionManager:
     """
 
     def __init__(self, checkpointer=None):
+        """Initialize the session manager.
+
+        Args:
+            checkpointer: LangGraph checkpointer instance for state persistence.
+        """
         self._checkpointer = checkpointer
         self._sessions: dict[str, SessionInfo] = _load_session_index()
 
     def create_session(self, session_id: str | None = None, description: str = "") -> SessionInfo:
-        """Create a new session and return its info."""
+        """Create a new session and return its info.
+
+        Args:
+            session_id: Optional session ID; auto-generated if None.
+            description: Human-readable session description.
+
+        Returns:
+            SessionInfo for the newly created session.
+        """
         if session_id is None:
             session_id = f"session-{int(time.time())}"
         now = time.time()
@@ -82,11 +99,22 @@ class SessionManager:
         return info
 
     def get_session(self, session_id: str) -> SessionInfo | None:
-        """Get session info by ID."""
+        """Get session info by ID.
+
+        Args:
+            session_id: Session ID to look up.
+
+        Returns:
+            SessionInfo if found, None otherwise.
+        """
         return self._sessions.get(session_id)
 
     def update_activity(self, session_id: str) -> None:
-        """Update last_active timestamp and increment turn count."""
+        """Update last_active timestamp and increment turn count.
+
+        Args:
+            session_id: Session ID to update.
+        """
         info = self._sessions.get(session_id)
         if info:
             info.last_active = time.time()
@@ -102,17 +130,36 @@ class SessionManager:
         )
 
     def get_invoke_config(self, session_id: str) -> dict:
-        """Build LangGraph invoke config for a session."""
+        """Build LangGraph invoke config for a session.
+
+        Args:
+            session_id: Session ID for the thread.
+
+        Returns:
+            Dict with configurable thread_id for LangGraph.
+        """
         return {"configurable": {"thread_id": session_id}}
 
     def session_exists(self, session_id: str) -> bool:
-        """Check if a session exists in the index."""
+        """Check if a session exists in the index.
+
+        Args:
+            session_id: Session ID to check.
+
+        Returns:
+            True if session exists in the index.
+        """
         return session_id in self._sessions
 
     def try_restore_from_checkpointer(self, agent, session_id: str) -> bool:
         """Try to restore a session from the checkpointer.
 
-        Returns True if the session state exists in the checkpointer.
+        Args:
+            agent: The LangGraph agent instance.
+            session_id: Session ID to restore.
+
+        Returns:
+            True if the session state exists in the checkpointer.
         """
         try:
             config = self.get_invoke_config(session_id)
@@ -130,7 +177,15 @@ class SessionManager:
         _save_session_index(self._sessions)
 
     def get_pending_interrupts(self, agent, session_id: str) -> list | None:
-        """Check if a session has pending interrupts (HITL approvals)."""
+        """Check if a session has pending interrupts (HITL approvals).
+
+        Args:
+            agent: The LangGraph agent instance.
+            session_id: Session ID to check.
+
+        Returns:
+            List of pending tasks if interrupts exist, None otherwise.
+        """
         try:
             config = self.get_invoke_config(session_id)
             state = agent.get_state(config)

@@ -5,6 +5,11 @@ from totoro.colors import AMBER_LT, AMBER, COPPER, RESET
 def restore_session(agent, session_id: str, session_manager=None) -> dict | None:
     """Restore a session from checkpoint and report its state.
 
+    Args:
+        agent: The LangGraph agent instance.
+        session_id: Session ID to restore.
+        session_manager: Optional SessionManager for registering restored sessions.
+
     Returns:
         invoke_config dict if session was restored, None if not found.
     """

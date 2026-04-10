@@ -219,8 +219,11 @@ def create_totoro_agent(config: AgentConfig):
     (task tool) which adds ~2,178 tokens of overhead per turn.
     Totoro manages sub-agents via its own orchestrate_tool.
 
+    Args:
+        config: Agent configuration including model, provider, and layer settings.
+
     Returns:
-        tuple: (agent, checkpointer, store, auto_dream_extractor)
+        A tuple of (agent, checkpointer, store, auto_dream_extractor).
     """
     global _api_timeout
     _api_timeout = config.loop.api_timeout_seconds
@@ -309,6 +312,16 @@ def _build_full_middleware_stack(config, model, backend, store, hitl_config):
     Tail stack:
      11. AnthropicPromptCachingMiddleware — prefix caching
      12. HumanInTheLoopMiddleware   — HITL interrupts (if configured)
+
+    Args:
+        config: Agent configuration.
+        model: The primary LLM model instance.
+        backend: LocalShellBackend for filesystem/shell access.
+        store: InMemoryStore for agent state.
+        hitl_config: HITL interrupt configuration dict, or None for auto-approve.
+
+    Returns:
+        List of middleware instances in execution order.
     """
     middleware_list = []
 
@@ -391,6 +404,10 @@ def _build_orchestrator_subagents(model, config: AgentConfig):
 
     Instead of pre-building graphs (not pickle-safe), we pass serializable
     configs to the orchestrator. Each child process rebuilds its own graph.
+
+    Args:
+        model: The primary LLM model instance.
+        config: Agent configuration with model and provider settings.
     """
     from totoro.orchestrator import register_subagent_configs
 
@@ -513,6 +530,12 @@ def _build_system_prompt(config: AgentConfig) -> str:
 
     Note: BASE_AGENT_PROMPT from DeepAgents is appended for core agent behavior
     guidelines (conciseness, task execution patterns, progress updates).
+
+    Args:
+        config: Agent configuration with project_root, model, and provider.
+
+    Returns:
+        The assembled system prompt string.
     """
     # ── Static prefix (cacheable) ──
     sections = [CORE_SYSTEM_PROMPT]

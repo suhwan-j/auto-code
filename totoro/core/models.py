@@ -19,7 +19,12 @@ def create_lightweight_model(model_name: str = "claude-haiku-4-5-20251001"):
     """Create a lightweight LLM for Auto-Dream memory extraction.
 
     Tries providers in order: OpenRouter, Anthropic, OpenAI, vLLM.
-    Returns None if no provider is available.
+
+    Args:
+        model_name: Model identifier to instantiate.
+
+    Returns:
+        An LLM model instance, or None if no provider is available.
     """
     for factory in (_make_openrouter, _make_anthropic, _make_openai, _make_vllm):
         model = factory(model_name)

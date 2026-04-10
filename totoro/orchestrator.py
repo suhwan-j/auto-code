@@ -33,7 +33,14 @@ _plan_only: bool = False             # When True, catbus plans but does NOT auto
 
 
 def register_subagent_configs(configs: list[dict], model_name: str, provider: str, project_root: str):
-    """Register serializable subagent configs for multiprocessing."""
+    """Register serializable subagent configs for multiprocessing.
+
+    Args:
+        configs: List of serializable subagent configuration dicts.
+        model_name: Name of the model to use in child processes.
+        provider: LLM provider identifier.
+        project_root: Absolute path to the project root directory.
+    """
     global _subagent_configs, _model_config, _project_root
     _subagent_configs = configs
     _model_config = {"model_name": model_name, "provider": provider}
@@ -41,16 +48,31 @@ def register_subagent_configs(configs: list[dict], model_name: str, provider: st
 
 
 def set_tracker(tracker):
+    """Set the status tracker for subagent monitoring.
+
+    Args:
+        tracker: StatusTracker instance for rendering subagent progress.
+    """
     global _tracker
     _tracker = tracker
 
 
 def set_pane_manager(pane_manager: PaneManager | None):
+    """Set the pane manager for split-pane TUI rendering.
+
+    Args:
+        pane_manager: PaneManager instance or None to disable.
+    """
     global _pane_manager
     _pane_manager = pane_manager
 
 
 def set_plan_only(enabled: bool):
+    """Set plan-only mode for catbus orchestration.
+
+    Args:
+        enabled: When True, catbus plans but does not auto-dispatch.
+    """
     global _plan_only
     _plan_only = enabled
 
@@ -86,7 +108,14 @@ def orchestrate_tool(tasks_json: str) -> str:
 
 
 def _run_and_format(tasks: list[dict]) -> str:
-    """Run tasks in parallel and format results."""
+    """Run tasks in parallel and format results.
+
+    Args:
+        tasks: List of task dicts with "type" and "task" keys.
+
+    Returns:
+        Formatted string combining all subagent results.
+    """
     results = _run_parallel(tasks)
 
     MAX_RESULT_CHARS = 1500
@@ -120,6 +149,14 @@ def _inject_context_into_tasks(
     Sub-agents run in separate processes with no conversation history.
     Without this context injection, they only see their individual task
     and can't understand the broader goal or how their work fits in.
+
+    Args:
+        tasks: List of task dicts to enrich with context.
+        original_request: The user's original request text.
+        plan_context: Summary of the catbus plan output.
+
+    Returns:
+        New list of task dicts with context prepended to descriptions.
     """
     if not original_request and not plan_context:
         return tasks
@@ -152,6 +189,12 @@ def _parse_plan_json(text: str) -> list[dict] | None:
     2. Any fenced code block containing a JSON array
     3. Raw JSON array anywhere in text
     4. Individual JSON objects on separate lines
+
+    Args:
+        text: Raw text output from catbus planner.
+
+    Returns:
+        Parsed list of task dicts, or None if parsing fails.
     """
     import re
 
@@ -209,6 +252,12 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
     """Run catbus planner, parse plan, then auto-dispatch execution agents.
 
     Flow: catbus → parse plan JSON → run execution agents → return all results.
+
+    Args:
+        catbus_tasks: List of catbus planner task dicts.
+
+    Returns:
+        Combined formatted string of plan summary and execution results.
     """
     # Phase 1: Run catbus (suppress summary — will show combined at end)
     plan_results = _run_parallel(catbus_tasks, suppress_summary=True)
@@ -298,7 +347,15 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
 # ─── Parallel execution engine (multiprocessing) ───
 
 def _run_parallel(tasks: list[dict], suppress_summary: bool = False) -> dict[str, SubagentResult | str]:
-    """Execute tasks in parallel using multiprocessing + curses split-pane."""
+    """Execute tasks in parallel using multiprocessing + curses split-pane.
+
+    Args:
+        tasks: List of task dicts with "type" and "task" keys.
+        suppress_summary: When True, skip printing summary after completion.
+
+    Returns:
+        Dict mapping subagent labels to their SubagentResult or error string.
+    """
     import curses as _curses
     from totoro.tui import SplitPaneTUI
 
@@ -459,10 +516,16 @@ def _process_monitor(
     tracker,
     halt: threading.Event,
 ):
-    """Monitor thread: detect child process exit → mark panes done → TUI can exit.
+    """Monitor thread: detect child process exit and mark panes done so TUI can exit.
 
     This solves the deadlock where TUI waits for is_active=False but
     complete_subagent() was only called after TUI exit.
+
+    Args:
+        processes: Dict mapping labels to multiprocessing.Process instances.
+        pane_manager: PaneManager instance or None.
+        tracker: StatusTracker instance or None.
+        halt: Threading event to signal this monitor to stop.
     """
     reaped: set[str] = set()
     while not halt.is_set():
@@ -490,7 +553,17 @@ def _worker_process(
     event_queue: mp.Queue,
     result_queue: mp.Queue,
 ):
-    """Run in a child process. Routes to lightweight LLM call or full agent."""
+    """Run in a child process. Routes to lightweight LLM call or full agent.
+
+    Args:
+        subagent_cfg: Serializable config dict for the subagent character.
+        description: Task description to execute.
+        label: Unique label for this worker (e.g. "satsuki-0").
+        model_config: Dict with "model_name" and "provider" for rebuilding model.
+        project_root: Absolute path to the project root directory.
+        event_queue: Multiprocessing queue for streaming events to parent.
+        result_queue: Multiprocessing queue to return the final SubagentResult.
+    """
     try:
         agent_name = subagent_cfg.get("name", "")
         if agent_name == "catbus":
@@ -530,9 +603,20 @@ def _run_lightweight_llm(
     project_root: str,
     event_queue: mp.Queue,
 ) -> SubagentResult:
-    """Single LLM call — no agent loop, no tools. Fast path for catbus (planner).
+    """Single LLM call with no agent loop or tools. Fast path for catbus planner.
 
     Just sends system_prompt + user message and returns the response.
+
+    Args:
+        subagent_cfg: Config dict containing "system_prompt" for the planner.
+        description: Task description to plan for.
+        label: Unique label for this worker.
+        model_config: Dict with "model_name" and "provider" for model resolution.
+        project_root: Absolute path to the project root directory.
+        event_queue: Multiprocessing queue for streaming events to parent.
+
+    Returns:
+        SubagentResult containing the planner's response text.
     """
     from totoro.core.agent import _resolve_model
     from langchain_core.messages import SystemMessage, HumanMessage
@@ -610,6 +694,17 @@ def _run_subagent_in_process(
 
     Excludes TodoList, SubAgent, Skills, Summarization middleware
     that create_deep_agent() would auto-add (~3,000+ tokens saved per subagent).
+
+    Args:
+        subagent_cfg: Config dict with "name" and "system_prompt" for the character.
+        description: Task description to execute.
+        label: Unique label for this worker.
+        model_config: Dict with "model_name" and "provider" for model resolution.
+        project_root: Absolute path to the project root directory.
+        event_queue: Multiprocessing queue for streaming events to parent.
+
+    Returns:
+        SubagentResult with final text, tools used, and files modified.
     """
     from totoro.core.agent import _resolve_model
     from langchain.agents import create_agent
@@ -778,7 +873,15 @@ def _run_subagent_in_process(
 
 
 def _extract_key_args(name: str, args: dict) -> dict:
-    """Extract only the essential args for status tracking (avoids serializing large content)."""
+    """Extract only the essential args for status tracking (avoids serializing large content).
+
+    Args:
+        name: Tool name.
+        args: Full tool call arguments dict.
+
+    Returns:
+        Dict with only the key arguments relevant for display.
+    """
     if name in ("write_file", "edit_file", "read_file"):
         return {"file_path": args.get("file_path", args.get("path", ""))}
     if name == "execute":
@@ -787,7 +890,15 @@ def _extract_key_args(name: str, args: dict) -> dict:
 
 
 def _format_tool_brief(name: str, args: dict) -> str:
-    """Format a short summary of tool call for verbose display."""
+    """Format a short summary of tool call for verbose display.
+
+    Args:
+        name: Tool name.
+        args: Tool call arguments dict.
+
+    Returns:
+        Short human-readable summary string (e.g. "edit_file(main.py)").
+    """
     if name in ("write_file", "edit_file", "read_file"):
         path = args.get("file_path", args.get("path", ""))
         short = os.path.basename(path) if path else "?"
@@ -807,7 +918,12 @@ def _format_tool_brief(name: str, args: dict) -> str:
 # ─── Event collector (runs in parent process, main thread) ───
 
 def _event_collector(event_queue: mp.Queue, halt: threading.Event):
-    """Single thread that consumes events from child processes."""
+    """Single thread that consumes events from child processes.
+
+    Args:
+        event_queue: Multiprocessing queue receiving SubagentEvents from workers.
+        halt: Threading event to signal this collector to stop.
+    """
     while not halt.is_set():
         try:
             event = event_queue.get(timeout=0.02)
@@ -835,6 +951,12 @@ class RenderThread(threading.Thread):
     """Daemon thread that periodically refreshes the status dashboard."""
 
     def __init__(self, tracker, interval: float = 0.5):
+        """Initialize the render thread.
+
+        Args:
+            tracker: StatusTracker instance to render.
+            interval: Refresh interval in seconds.
+        """
         super().__init__(daemon=True)
         self._tracker = tracker
         self._interval = interval

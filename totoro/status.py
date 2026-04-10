@@ -63,7 +63,14 @@ def _pick_agent_name() -> str:
 
 
 def _pick_subagent_name(agent_type: str) -> str:
-    """Return character name for the subagent type."""
+    """Return character name for the subagent type.
+
+    Args:
+        agent_type: Subagent type key (e.g. "satsuki", "satsuki-0").
+
+    Returns:
+        Display name for the subagent type.
+    """
     # Extract type from label like "satsuki-0" → "satsuki"
     base_type = agent_type.rsplit("-", 1)[0] if "-" in agent_type else agent_type
     return _CHARACTER_NAMES.get(base_type, agent_type)
@@ -193,7 +200,13 @@ class StatusTracker:
             self._mark_dirty()
 
     def on_subagent_tool(self, agent_name: str, tool_name: str, tool_args: dict):
-        """Called from subagent worker threads when a tool is invoked."""
+        """Record a tool invocation from a subagent worker thread.
+
+        Args:
+            agent_name: Label of the subagent that invoked the tool.
+            tool_name: Name of the tool being invoked.
+            tool_args: Arguments passed to the tool.
+        """
         with self._lock:
             self.tool_count += 1
             info = self.active_subagents.get(agent_name)
@@ -214,7 +227,11 @@ class StatusTracker:
             return False
 
     def set_plan_item_active(self, index: int):
-        """Mark a specific todo as in_progress."""
+        """Mark a specific todo as in_progress.
+
+        Args:
+            index: Zero-based index of the todo item to activate.
+        """
         with self._lock:
             if 0 <= index < len(self.todos):
                 self.todos[index].status = "in_progress"
@@ -467,10 +484,22 @@ _session_tokens = {"input": 0, "output": 0, "cached": 0}
 
 
 def get_session_tokens() -> dict:
+    """Return a copy of session-level token counts.
+
+    Returns:
+        Dict with keys "input", "output", and "cached".
+    """
     return _session_tokens.copy()
 
 
 def accumulate_session_tokens(input_tokens: int, output_tokens: int, cached_tokens: int = 0):
+    """Add token counts to the session-level accumulator.
+
+    Args:
+        input_tokens: Number of input tokens to add.
+        output_tokens: Number of output tokens to add.
+        cached_tokens: Number of cached input tokens to add.
+    """
     _session_tokens["input"] += input_tokens
     _session_tokens["output"] += output_tokens
     _session_tokens["cached"] += cached_tokens
@@ -483,7 +512,14 @@ def reset_session_tokens():
 
 
 def _format_tokens(total: int) -> str:
-    """Format token count: 1234 → '1.2k', 12345 → '12k'."""
+    """Format token count with human-readable suffix.
+
+    Args:
+        total: Raw token count.
+
+    Returns:
+        Formatted string (e.g. "1.2k tokens", "12k tokens").
+    """
     if total < 1000:
         return f"{total} tokens"
     if total < 10000:
@@ -492,7 +528,14 @@ def _format_tokens(total: int) -> str:
 
 
 def _format_tokens_short(count: int) -> str:
-    """Compact token format without 'tokens' suffix: 1234 → '1.2k', 200 → '200'."""
+    """Compact token format without 'tokens' suffix.
+
+    Args:
+        count: Raw token count.
+
+    Returns:
+        Compact string (e.g. "1.2k", "200").
+    """
     if count < 1000:
         return str(count)
     if count < 10000:
@@ -503,18 +546,31 @@ def _format_tokens_short(count: int) -> str:
 def _format_tokens_detail(input_tok: int, output_tok: int, cached: int) -> str:
     """Format token display with input/output breakdown.
 
-    ↑ = new input tokens (uncached context sent to model)
-    ↓ = output tokens (model's response)
+    Uses arrows to indicate direction: up = new input tokens (uncached context
+    sent to model), down = output tokens (model's response).
 
-    Examples:
-      No cache:   "↑ 6.0k ↓ 200 tokens"
-      With cache: "↑ 2.0k ↓ 200 tokens"
+    Args:
+        input_tok: Total input token count.
+        output_tok: Total output token count.
+        cached: Number of cached input tokens to subtract from input.
+
+    Returns:
+        Formatted string (e.g. "up 6.0k down 200 tokens").
     """
     effective_input = max(0, input_tok - cached)
     return f"↑ {_format_tokens_short(effective_input)} ↓ {_format_tokens_short(output_tok)} tokens"
 
 
 def _format_tool_summary(name: str, args: dict) -> str:
+    """Extract a short summary string from tool arguments for display.
+
+    Args:
+        name: Tool name (e.g. "execute", "write_file").
+        args: Tool arguments dict.
+
+    Returns:
+        Short summary string (e.g. file path, command snippet).
+    """
     if name == "execute":
         return args.get("command", "")[:60]
     if name in ("write_file", "edit_file", "read_file"):

@@ -27,6 +27,12 @@ def estimate_tokens(messages: list) -> int:
 
     This avoids under-counting for CJK-heavy conversations, which would
     cause context compaction to trigger too late.
+
+    Args:
+        messages: List of message objects with .content attributes.
+
+    Returns:
+        Estimated total token count across all messages.
     """
     total = 0
     for m in messages:
@@ -49,7 +55,14 @@ def estimate_tokens(messages: list) -> int:
 
 
 def _estimate_text_tokens(text: str) -> int:
-    """Estimate tokens for a single text string."""
+    """Estimate tokens for a single text string.
+
+    Args:
+        text: The text string to estimate.
+
+    Returns:
+        Estimated token count.
+    """
     if not text:
         return 0
     cjk_chars = len(_CJK_RE.findall(text))
@@ -120,6 +133,12 @@ def get_model_context_window(model_name: str) -> int:
 
     Checks known model families by substring match. Returns 200K default
     if no match is found (safe assumption for modern models).
+
+    Args:
+        model_name: Model name/identifier, optionally with provider prefix.
+
+    Returns:
+        Context window size in tokens.
     """
     lower = model_name.lower()
     # Strip common provider prefixes (e.g. "anthropic/claude-..." from OpenRouter)

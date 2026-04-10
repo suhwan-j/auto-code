@@ -65,6 +65,11 @@ class PaneState:
         return f"{secs // 60}m{secs % 60}s"
 
     def append(self, text: str):
+        """Append a line to recent output, trimming to max_lines.
+
+        Args:
+            text: Line of text to append.
+        """
         self.recent_lines.append(text)
         if len(self.recent_lines) > self.max_lines:
             self.recent_lines = self.recent_lines[-self.max_lines:]
@@ -78,16 +83,34 @@ class PaneManager:
         self.panes: dict[str, PaneState] = {}
 
     def add_subagent(self, label: str, description: str, pid: int | None = None):
+        """Register a new subagent pane.
+
+        Args:
+            label: Unique label for the subagent.
+            description: Short description of the subagent's task.
+            pid: Optional process ID of the subagent.
+        """
         with self._lock:
             self.panes[label] = PaneState(label=label, description=description, pid=pid)
 
     def set_pid(self, label: str, pid: int):
+        """Set the process ID for an existing subagent pane.
+
+        Args:
+            label: Label of the subagent.
+            pid: Process ID to assign.
+        """
         with self._lock:
             pane = self.panes.get(label)
             if pane:
                 pane.pid = pid
 
     def update_subagent(self, event: SubagentEvent):
+        """Process an event from a subagent and update pane state.
+
+        Args:
+            event: Event containing type, label, and data from the subagent.
+        """
         with self._lock:
             pane = self.panes.get(event.label)
             if pane is None:
@@ -143,6 +166,11 @@ class PaneManager:
                 pane.append(f"✗ {event.data.get('text', 'Error')[:60]}")
 
     def complete_subagent(self, label: str):
+        """Mark a subagent as done and record its end time.
+
+        Args:
+            label: Label of the subagent to complete.
+        """
         with self._lock:
             pane = self.panes.get(label)
             if pane:
@@ -151,12 +179,20 @@ class PaneManager:
                     pane.end_time = time.time()
 
     def get_panes(self) -> list[PaneState]:
-        """Get snapshot of all panes for rendering."""
+        """Get snapshot of all panes for rendering.
+
+        Returns:
+            List of current PaneState objects.
+        """
         with self._lock:
             return list(self.panes.values())
 
     def get_summary(self) -> str:
-        """Build completion summary."""
+        """Build completion summary.
+
+        Returns:
+            Formatted multi-line string summarizing all subagent results.
+        """
         with self._lock:
             parts = []
             for pane in self.panes.values():

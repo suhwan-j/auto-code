@@ -12,6 +12,12 @@ def sanitize_text(text: str) -> str:
     when decoding mixed-encoding byte streams. These surrogates are
     invalid in UTF-8 and will cause errors in JSON serialization,
     print(), and API calls.
+
+    Args:
+        text: Input string that may contain surrogate characters.
+
+    Returns:
+        Cleaned string with surrogates replaced by the Unicode replacement character.
     """
     if not isinstance(text, str):
         return str(text)

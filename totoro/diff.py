@@ -10,7 +10,15 @@ from totoro.colors import DIM as _DIM, AMBER_LT as _GREEN, COPPER as _RED, BLUE 
 
 
 def find_line_number(file_path: str, search_text: str) -> int | None:
-    """Find the line number where search_text starts in file."""
+    """Find the line number where search_text starts in file.
+
+    Args:
+        file_path: Path to the file to search.
+        search_text: Text to locate within the file.
+
+    Returns:
+        1-based line number where the text starts, or None if not found.
+    """
     try:
         with open(file_path) as f:
             content = f.read()
@@ -23,7 +31,16 @@ def find_line_number(file_path: str, search_text: str) -> int | None:
 
 
 def format_file_diff(tool_name: str, args: dict, start_line: int | None = None) -> str | None:
-    """Format a file operation as a visual diff block."""
+    """Format a file operation as a visual diff block.
+
+    Args:
+        tool_name: Tool that performed the file operation (e.g. "write_file", "edit_file").
+        args: Tool arguments containing file path and content/changes.
+        start_line: Optional starting line number for context in edit diffs.
+
+    Returns:
+        ANSI-formatted diff string, or None if the tool is not a file operation.
+    """
     file_path = args.get("file_path", "")
     # Show relative path if possible
     try:
@@ -84,7 +101,12 @@ def format_file_diff(tool_name: str, args: dict, start_line: int | None = None) 
 
 
 def safe_print(text: str, **kwargs):
-    """Print with surrogate-safe encoding."""
+    """Print with surrogate-safe encoding.
+
+    Args:
+        text: Text to print.
+        **kwargs: Additional arguments passed to the built-in print().
+    """
     try:
         print(sanitize_text(text), **kwargs)
     except UnicodeEncodeError:

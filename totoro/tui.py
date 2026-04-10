@@ -34,7 +34,14 @@ def _strip_ansi(text: str) -> str:
 
 
 def _wcwidth(ch: str) -> int:
-    """Return display width of a character (2 for CJK, 1 for others)."""
+    """Return display width of a character (2 for CJK, 1 for others).
+
+    Args:
+        ch: Single character to measure.
+
+    Returns:
+        Display width: 2 for CJK/fullwidth characters, 1 otherwise.
+    """
     cp = ord(ch)
     # CJK Unified Ideographs, Hangul Syllables, fullwidth forms, etc.
     if (0x1100 <= cp <= 0x115F or   # Hangul Jamo
@@ -50,12 +57,27 @@ def _wcwidth(ch: str) -> int:
 
 
 def _wcswidth(text: str) -> int:
-    """Return total display width of a string."""
+    """Return total display width of a string.
+
+    Args:
+        text: String to measure.
+
+    Returns:
+        Total display width accounting for CJK/fullwidth characters.
+    """
     return sum(_wcwidth(ch) for ch in text)
 
 
 def _truncate_to_width(text: str, max_width: int) -> str:
-    """Truncate string to fit within max_width display columns."""
+    """Truncate string to fit within max_width display columns.
+
+    Args:
+        text: String to truncate.
+        max_width: Maximum display width in columns.
+
+    Returns:
+        Truncated string that fits within max_width.
+    """
     if max_width <= 0:
         return ""
     w = 0
@@ -80,7 +102,14 @@ class SplitPaneTUI:
         self._running = False
 
     def run(self, stdscr):
-        """Main entry called via curses.wrapper(). Sets up windows and render loop."""
+        """Main entry called via curses.wrapper().
+
+        Sets up windows and runs the render loop until all panes complete
+        or the user presses Ctrl+C.
+
+        Args:
+            stdscr: The curses standard screen object.
+        """
         self._stdscr = stdscr
         curses.curs_set(0)
         curses.start_color()
@@ -179,7 +208,11 @@ class SplitPaneTUI:
         self._running = False
 
     def _render_divider(self, height: int):
-        """Draw vertical divider as subtle dotted line."""
+        """Draw vertical divider as subtle dotted line.
+
+        Args:
+            height: Terminal height in rows.
+        """
         for row in range(height):
             try:
                 ch = "┊" if row % 2 == 0 else " "
@@ -189,7 +222,11 @@ class SplitPaneTUI:
                 pass
 
     def _render_left(self, height: int):
-        """Render dashboard on left pane."""
+        """Render dashboard on left pane.
+
+        Args:
+            height: Terminal height in rows.
+        """
         win = self._left_win
         win.erase()
         w = self._div_col - 1
@@ -315,6 +352,9 @@ class SplitPaneTUI:
 
         Completed/error panes collapse to a single summary line,
         giving maximum space to still-running panes.
+
+        Args:
+            height: Terminal height in rows.
         """
         win = self._right_win
         win.erase()
@@ -429,7 +469,16 @@ class SplitPaneTUI:
 
     @staticmethod
     def _waddstr(win, row: int, col: int, text: str, pair: int, bold: bool = False):
-        """Safe addstr with color, CJK-aware width truncation."""
+        """Safe addstr with color, CJK-aware width truncation.
+
+        Args:
+            win: Curses window to write to.
+            row: Row position.
+            col: Column position.
+            text: Text to display.
+            pair: Curses color pair ID.
+            bold: Whether to apply bold attribute.
+        """
         try:
             h, w = win.getmaxyx()
             if row >= h or col >= w:

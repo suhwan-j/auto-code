@@ -82,6 +82,14 @@ def git_tool(command: str) -> str:
 
 
 def _classify_git_command(command: str) -> str:
+    """Classify a git command by danger level.
+
+    Args:
+        command: Git command string (without the 'git' prefix).
+
+    Returns:
+        One of "dangerous", "destructive", or "read_only".
+    """
     for pattern in GIT_DANGEROUS:
         if command.startswith(pattern):
             return "dangerous"
@@ -93,6 +101,14 @@ def _classify_git_command(command: str) -> str:
 
 
 def _detect_sensitive_files(file_args: str) -> list[str]:
+    """Detect potentially sensitive files in git add arguments.
+
+    Args:
+        file_args: File arguments string from 'git add'.
+
+    Returns:
+        List of file paths or warnings matching sensitive patterns.
+    """
     if file_args.strip() in ("-A", "--all", "."):
         return [f"'{file_args.strip()}' stages all files - review before committing"]
     try:
@@ -103,6 +119,14 @@ def _detect_sensitive_files(file_args: str) -> list[str]:
 
 
 def _extract_push_target(command: str) -> str:
+    """Extract the target branch name from a git push command.
+
+    Args:
+        command: Full push command string (e.g. "push origin main").
+
+    Returns:
+        Branch name string, or empty string if not found.
+    """
     try:
         parts = shlex.split(command)
     except ValueError:

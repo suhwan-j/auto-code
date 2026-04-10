@@ -28,6 +28,11 @@ class SkillManager:
     """
 
     def __init__(self, project_root: str):
+        """Initialize the skill manager.
+
+        Args:
+            project_root: Absolute path to the project root directory.
+        """
         # Built-in skills ship with the totoro package
         self.builtin_dir = Path(__file__).resolve().parent.parent / "built-in" / "skills"
         self.global_dir = Path.home() / ".totoro" / "skills"
@@ -57,7 +62,18 @@ class SkillManager:
 
     def add_skill(self, name: str, description: str, content: str,
                   allowed_tools: str = "", scope: str = "project") -> Path:
-        """Create a new skill with SKILL.md."""
+        """Create a new skill with SKILL.md.
+
+        Args:
+            name: Skill name (used as directory name).
+            description: Human-readable skill description for frontmatter.
+            content: Skill instruction content (body of SKILL.md).
+            allowed_tools: Comma-separated list of allowed tool names.
+            scope: "project" or "global" to determine install location.
+
+        Returns:
+            Path to the created SKILL.md file.
+        """
         base = self.project_dir if scope == "project" else self.global_dir
         skill_dir = base / name
         skill_dir.mkdir(parents=True, exist_ok=True)
@@ -79,11 +95,17 @@ description: {description}
         """Install a skill from a remote URL or GitHub repo.
 
         Supports:
-          /skill install <url>                        — single SKILL.md
-          /skill install <repo-url> --skill <name>    — specific skill from repo's skills/ dir
-          /skill install gh:user/repo --skill <name>  — same, shorthand
+          /skill install <url>                        -- single SKILL.md
+          /skill install <repo-url> --skill <name>    -- specific skill from repo's skills/ dir
+          /skill install gh:user/repo --skill <name>  -- same, shorthand
 
-        Returns (message, path_or_none).
+        Args:
+            source: URL, GitHub URL, or gh:user/repo shorthand.
+            skill_name: Specific skill name within a repo's skills/ directory.
+            scope: "global" or "project" to determine install location.
+
+        Returns:
+            Tuple of (status message, installed path or None on failure).
         """
         # ── Repo + --skill mode: download entire skill directory ──
         if skill_name:
@@ -119,7 +141,14 @@ description: {description}
         return f"Installed '{name}'", skill_path
 
     def remove_skill(self, name: str) -> str:
-        """Remove a skill by name. Checks project first, then global."""
+        """Remove a skill by name. Checks project first, then global.
+
+        Args:
+            name: Skill name to remove.
+
+        Returns:
+            Status message describing what was removed or if not found.
+        """
         for base, scope in [(self.project_dir, "project"), (self.global_dir, "global")]:
             skill_dir = base / name
             if skill_dir.exists():
@@ -225,7 +254,11 @@ description: {description}
     def _parse_github_repo(self, source: str) -> tuple[str, str, str] | None:
         """Parse GitHub repo info from URL or shorthand.
 
-        Returns (owner, repo, branch) or None.
+        Args:
+            source: GitHub URL or gh:user/repo shorthand.
+
+        Returns:
+            Tuple of (owner, repo, branch) or None if parsing fails.
         """
         import re
 
@@ -249,7 +282,18 @@ description: {description}
 
     def _install_from_repo(self, owner: str, repo: str, branch: str,
                            skill_name: str, scope: str) -> tuple[str, Path | None]:
-        """Download an entire skill directory from a GitHub repo's skills/ folder."""
+        """Download an entire skill directory from a GitHub repo's skills/ folder.
+
+        Args:
+            owner: GitHub repository owner.
+            repo: GitHub repository name.
+            branch: Git branch name.
+            skill_name: Name of the skill directory under skills/.
+            scope: "global" or "project" install location.
+
+        Returns:
+            Tuple of (status message, installed path or None on failure).
+        """
         api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/skills/{skill_name}?ref={branch}"
 
         try:
@@ -279,7 +323,18 @@ description: {description}
 
     def _download_github_dir(self, entries: list, dest: Path,
                              owner: str, repo: str, branch: str) -> int:
-        """Recursively download a GitHub directory tree. Returns file count."""
+        """Recursively download a GitHub directory tree.
+
+        Args:
+            entries: List of GitHub API content entries.
+            dest: Local destination directory path.
+            owner: GitHub repository owner.
+            repo: GitHub repository name.
+            branch: Git branch name.
+
+        Returns:
+            Number of files successfully downloaded.
+        """
         count = 0
         for entry in entries:
             name = entry["name"]
@@ -309,7 +364,14 @@ description: {description}
         return count
 
     def _github_api_get(self, url: str):
-        """GET from GitHub API and return parsed JSON."""
+        """GET from GitHub API and return parsed JSON.
+
+        Args:
+            url: GitHub API URL to fetch.
+
+        Returns:
+            Parsed JSON response (list or dict).
+        """
         req = urllib.request.Request(url, headers={
             "User-Agent": "totoro-code/1.0",
             "Accept": "application/vnd.github.v3+json",

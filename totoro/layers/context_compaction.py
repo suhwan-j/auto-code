@@ -42,13 +42,29 @@ class ContextCompactor:
         emergency_threshold: float = 0.95,
         model=None,
     ):
+        """Initialize the 3-tier context compactor.
+
+        Args:
+            auto_threshold: Usage ratio to trigger auto compaction.
+            reactive_threshold: Usage ratio to trigger reactive compaction.
+            emergency_threshold: Usage ratio to trigger emergency compaction.
+            model: Optional lightweight LLM for intelligent summarization.
+        """
         self._auto = auto_threshold
         self._reactive = reactive_threshold
         self._emergency = emergency_threshold
         self._model = model
 
     def check_and_compact(self, messages: list, model_context_window: int = 200000) -> list | None:
-        """Check usage and compact if needed. Returns compacted messages or None."""
+        """Check usage and compact if needed.
+
+        Args:
+            messages: The current conversation message list.
+            model_context_window: Total context window size in tokens.
+
+        Returns:
+            Compacted message list, or None if no compaction needed.
+        """
         from totoro.layers._token_utils import estimate_tokens
 
         token_count = estimate_tokens(messages)
@@ -81,7 +97,15 @@ class ContextCompactor:
         ]
 
     def _summarize(self, messages: list, emergency: bool = False) -> str:
-        """Summarize messages using LLM if available, otherwise heuristic fallback."""
+        """Summarize messages using LLM if available, otherwise heuristic fallback.
+
+        Args:
+            messages: Messages to summarize.
+            emergency: If True, use a more aggressive summarization prompt.
+
+        Returns:
+            Summary text.
+        """
         if self._model is not None:
             try:
                 return self._llm_summarize(messages, emergency)
@@ -90,7 +114,15 @@ class ContextCompactor:
         return _heuristic_summarize(messages)
 
     def _llm_summarize(self, messages: list, emergency: bool = False) -> str:
-        """Use lightweight LLM to generate a real summary."""
+        """Use lightweight LLM to generate a real summary.
+
+        Args:
+            messages: Messages to summarize.
+            emergency: If True, use the emergency (ultra-concise) prompt.
+
+        Returns:
+            Summary text from the LLM.
+        """
         conversation_text = _format_for_summary(messages)
         if not conversation_text.strip():
             return "No significant content."
@@ -106,7 +138,14 @@ class ContextCompactor:
 
 
 def _heuristic_summarize(messages: list) -> str:
-    """Fast heuristic fallback — extract key lines from messages."""
+    """Fast heuristic fallback — extract key lines from messages.
+
+    Args:
+        messages: Messages to summarize.
+
+    Returns:
+        Summary text built from the last 20 human/ai messages.
+    """
     lines = []
     for m in messages:
         role = getattr(m, "type", "unknown")
@@ -124,7 +163,14 @@ def _heuristic_summarize(messages: list) -> str:
 
 
 def _format_for_summary(messages: list) -> str:
-    """Format messages as readable text for the LLM summarizer."""
+    """Format messages as readable text for the LLM summarizer.
+
+    Args:
+        messages: Messages to format.
+
+    Returns:
+        Formatted text with role-prefixed lines.
+    """
     lines = []
     for m in messages:
         role = getattr(m, "type", "unknown")
@@ -148,7 +194,14 @@ def _format_for_summary(messages: list) -> str:
 
 
 def _truncate_tool_result(message):
-    """Return a copy with truncated content if it's a tool result."""
+    """Return a copy with truncated content if it's a tool result.
+
+    Args:
+        message: A message object to potentially truncate.
+
+    Returns:
+        The original message, or a copy with content truncated to 2000 chars.
+    """
     content = getattr(message, "content", None)
     if hasattr(message, "tool_call_id") and content and len(content) > 2000:
         from copy import copy
@@ -169,6 +222,15 @@ class ContextCompactionMiddleware(AgentMiddleware):
         model_context_window: int = 200_000,
         model=None,
     ):
+        """Initialize the context compaction middleware.
+
+        Args:
+            auto_threshold: Usage ratio to trigger auto compaction.
+            reactive_threshold: Usage ratio to trigger reactive compaction.
+            emergency_threshold: Usage ratio to trigger emergency compaction.
+            model_context_window: Total context window size in tokens.
+            model: Optional lightweight LLM for intelligent summarization.
+        """
         self._compactor = ContextCompactor(
             auto_threshold, reactive_threshold, emergency_threshold, model=model,
         )
@@ -179,6 +241,15 @@ class ContextCompactionMiddleware(AgentMiddleware):
         return "ContextCompactionMiddleware"
 
     def before_model(self, state, runtime) -> dict[str, Any] | None:
+        """Check context usage and compact messages if thresholds are exceeded.
+
+        Args:
+            state: Current agent state containing messages.
+            runtime: Middleware runtime context.
+
+        Returns:
+            Dict with compacted messages, or None if no compaction needed.
+        """
         messages = state.get("messages", []) if isinstance(state, dict) else getattr(state, "messages", [])
         compacted = self._compactor.check_and_compact(messages, self._context_window)
         if compacted is not None:

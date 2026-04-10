@@ -6,7 +6,15 @@ from totoro.config.schema import AgentConfig
 
 
 def load_config(cli_overrides: dict | None = None, project_root: str | None = None) -> AgentConfig:
-    """5-level config priority: CLI > env > project > user > defaults"""
+    """Load configuration with 5-level priority: CLI > env > project > user > defaults.
+
+    Args:
+        cli_overrides: Dict of CLI-provided config overrides.
+        project_root: Project root path for locating project-level settings.
+
+    Returns:
+        Fully resolved AgentConfig instance.
+    """
     config_dict = {}
 
     # User global
@@ -47,6 +55,9 @@ def ensure_api_keys(force_setup: bool = False):
     """Verify required API keys exist. Runs setup wizard if needed.
 
     Settings are stored at ~/.totoro/settings.json (user home, not project).
+
+    Args:
+        force_setup: When True, always run the setup wizard regardless of existing keys.
     """
     from totoro.config.setup import load_provider_settings, inject_env_from_settings, run_setup_wizard
 

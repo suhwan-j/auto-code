@@ -5,6 +5,16 @@ import time
 import json
 import argparse
 
+from totoro.colors import (
+    RESET as _RESET, BOLD as _BOLD, DIM as _DIM,
+    BLUE as _BLUE, BODY as _BODY, SECONDARY as _SECONDARY,
+    AMBER as _AMBER, AMBER_LT as _AMBER_LT,
+    COPPER as _RED, WARN as _WARN,
+    ACCENT as _ACCENT,
+)
+_YELLOW = _AMBER
+_MAGENTA = _SECONDARY
+
 # Lazy-loaded at first use (saves ~500-800ms startup):
 #   from langgraph.types import Command
 #   from totoro.utils import sanitize_text
@@ -37,6 +47,15 @@ def _ensure_imports():
 
 # ─── Pending tool calls for diff display ───
 def _banner(config=None, session_id: str = "") -> str:
+    """Build the ASCII art welcome banner with model and session info.
+
+    Args:
+        config: Agent configuration object with model/provider info.
+        session_id: Current session identifier to display.
+
+    Returns:
+        Multi-line ANSI-formatted banner string.
+    """
     import shutil
     from totoro.colors import ACCENT, BODY, SECONDARY, DIM, RESET
     width = shutil.get_terminal_size().columns
@@ -50,7 +69,7 @@ def _banner(config=None, session_id: str = "") -> str:
     _T = ["████████╗", "╚══██╔══╝", "   ██║   ", "   ██║   ", "   ██║   ", "   ╚═╝   "]
     _O = [" ██████╗ ", "██╔═══██╗", "██║   ██║", "██║   ██║", "╚██████╔╝", " ╚═════╝ "]
     _Rv = ["██████╗  ", "██╔══██╗ ", "██████╔╝ ", "██╔══██╗ ", "██║  ██║ ", "╚═╝  ╚═╝ "]
-    logo_raw = ["".join(l[i] for l in [_T, _O, _T, _O, _Rv, _O]) for i in range(6)]
+    logo_raw = ["".join(ch[i] for ch in [_T, _O, _T, _O, _Rv, _O]) for i in range(6)]
 
     # Mascot — Totoro (raw for width calc)
     mascot_raw = [
@@ -79,7 +98,7 @@ def _banner(config=None, session_id: str = "") -> str:
         "══════ ██████ ░░░░░░░░░░░░░ ██████ ═════",
         "        ▀███▀               ▀███▀",
     ]
-    mascot_w = max(len(l) for l in mascot_raw)
+    mascot_w = max(len(line) for line in mascot_raw)
     mascot_h = len(mascot_raw)
 
 
@@ -92,8 +111,8 @@ def _banner(config=None, session_id: str = "") -> str:
     content_h = 12
     offset = max(0, (mascot_h - content_h) // 2)
 
-    for i, l in enumerate(logo_raw):
-        right[offset + i] = f"{A}{l}{R}"
+    for i, line in enumerate(logo_raw):
+        right[offset + i] = f"{A}{line}{R}"
 
     right[offset + 7]  = f"{SECONDARY}Model{R}     {DIM}│{R}  {BODY}{model_name}{R}"
     right[offset + 8]  = f"{SECONDARY}Provider{R}  {DIM}│{R}  {BODY}{provider}{R}"
@@ -118,22 +137,17 @@ _pending_file_ops: dict[str, dict] = {}  # tool_call_id -> {name, args}
 
 
 def _is_slash_command(text: str) -> bool:
-    """Check if input is a slash command (not a file path like /home/...)."""
+    """Check if input is a slash command (not a file path like /home/...).
+
+    Args:
+        text: Raw user input string.
+
+    Returns:
+        True if the input matches a registered slash command.
+    """
     from totoro.commands.registry import get_command_names
     first_word = text.strip().split()[0].lower() if text.strip() else ""
     return any(first_word == cmd or first_word.startswith(cmd + " ") for cmd in get_command_names())
-
-
-# ─── ANSI formatting helpers (palette-based) ───
-from totoro.colors import (
-    RESET as _RESET, BOLD as _BOLD, DIM as _DIM,
-    BLUE as _BLUE, BODY as _BODY, SECONDARY as _SECONDARY,
-    AMBER as _AMBER, AMBER_LT as _AMBER_LT,
-    COPPER as _RED, WARN as _WARN,
-    ACCENT as _ACCENT,
-)
-_YELLOW = _AMBER
-_MAGENTA = _SECONDARY
 
 
 def main():
@@ -228,7 +242,16 @@ def main():
 def _run_interactive(agent, invoke_config: dict, session_manager=None,
                      auto_approve: bool = False, verbose: bool = False,
                      config=None):
-    """Interactive mode main loop."""
+    """Interactive mode main loop.
+
+    Args:
+        agent: Compiled LangGraph agent.
+        invoke_config: LangGraph invocation config with thread_id.
+        session_manager: Optional session manager for persistence.
+        auto_approve: Whether to skip all approval prompts.
+        verbose: Whether to show detailed tool results.
+        config: Agent configuration for banner and model switching.
+    """
     from totoro.commands.registry import handle_slash_command
     from totoro.input import InputHandler
 
@@ -329,7 +352,16 @@ def _run_interactive(agent, invoke_config: dict, session_manager=None,
 
 
 def _handle_model_change(sentinel: str, config, session_manager):
-    """Parse model change sentinel and rebuild agent. Returns new agent or None on error."""
+    """Parse model change sentinel and rebuild agent.
+
+    Args:
+        sentinel: Sentinel string with format "__model_change__:model[:provider]".
+        config: Current agent configuration to update.
+        session_manager: Session manager for re-injection.
+
+    Returns:
+        New agent on success, or None on error.
+    """
     parts = sentinel.split(":", maxsplit=2)
     # parts = ["__model_change__", model_name] or ["__model_change__", model_name, provider]
     new_model = parts[1] if len(parts) > 1 else None
@@ -376,7 +408,12 @@ def _handle_model_change(sentinel: str, config, session_manager):
 
 
 def _persist_model_to_settings(model_name: str, project_root: str = ""):
-    """Save selected model to ~/.totoro/settings.json so it persists across sessions."""
+    """Save selected model to ~/.totoro/settings.json so it persists across sessions.
+
+    Args:
+        model_name: Model identifier to persist.
+        project_root: Project root path (unused, kept for signature compatibility).
+    """
     import json
     from pathlib import Path
     settings_path = Path.home() / ".totoro" / "settings.json"
@@ -395,6 +432,14 @@ def _persist_model_to_settings(model_name: str, project_root: str = ""):
 def _stream_with_hitl(agent, user_input: str, config: dict, auto_approve: bool = False,
                       verbose: bool = False, handler=None) -> bool:
     """Stream agent response with HITL interrupt handling and live status dashboard.
+
+    Args:
+        agent: Compiled LangGraph agent.
+        user_input: User's message text.
+        config: LangGraph invocation config with thread_id.
+        auto_approve: Whether to auto-approve all tool executions.
+        verbose: Whether to show detailed tool results.
+        handler: Optional InputHandler for mode switching during streaming.
 
     Returns:
         True if the agent produced a response, False if errors occurred.
@@ -492,9 +537,19 @@ def _stream_with_hitl(agent, user_input: str, config: dict, auto_approve: bool =
 def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbose: bool = False) -> list | None:
     """Stream agent response with token-level AI text streaming.
 
-    Uses stream_mode=["messages", "updates"]:
-      - "messages": token-by-token AI text + tool call chunks (real-time output)
-      - "updates": node-level outputs for tool results, todos, diffs
+    Uses stream_mode=["messages", "updates"]: "messages" provides token-by-token
+    AI text and tool call chunks for real-time output, while "updates" provides
+    node-level outputs for tool results, todos, and diffs.
+
+    Args:
+        agent: Compiled LangGraph agent.
+        input_payload: Message dict or Command resume payload.
+        config: LangGraph invocation config with thread_id.
+        tracker: StatusTracker for live dashboard updates.
+        verbose: Whether to show detailed tool results.
+
+    Returns:
+        List of pending interrupt tasks if HITL is needed, or None if complete.
     """
 
     got_ai_response = False
@@ -729,7 +784,14 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
 
 
 def _extract_text(content) -> str:
-    """Extract text from various content formats."""
+    """Extract text from various content formats.
+
+    Args:
+        content: Message content as string, list of blocks, or other format.
+
+    Returns:
+        Sanitized plain text extracted from the content.
+    """
     if isinstance(content, str):
         return sanitize_text(content)
     if isinstance(content, list):
@@ -746,8 +808,15 @@ def _extract_text(content) -> str:
 def _build_resume_payload(interrupts, decisions: list[dict]):
     """Build the resume payload, handling single and multiple interrupts.
 
-    For a single interrupt: resume={"decisions": decisions}
-    For multiple interrupts: resume={interrupt_id: {"decisions": [decision]}, ...}
+    For a single interrupt the payload is {"decisions": decisions}. For
+    multiple interrupts each decision is mapped to its interrupt ID.
+
+    Args:
+        interrupts: List of LangGraph interrupt task objects.
+        decisions: List of decision dicts (approve/reject/edit) for each interrupt.
+
+    Returns:
+        Resume payload dict suitable for Command(resume=...).
     """
     # Check if interrupts have IDs (newer LangGraph API)
     interrupt_ids = []
@@ -770,7 +839,14 @@ def _build_resume_payload(interrupts, decisions: list[dict]):
 
 
 def _flatten_decisions(interrupts) -> list:
-    """Count total number of decisions needed from interrupt list."""
+    """Flatten interrupt list into individual action items needing decisions.
+
+    Args:
+        interrupts: List of LangGraph interrupt task objects.
+
+    Returns:
+        Flat list of action items requiring a decision.
+    """
     count = []
     for task in interrupts:
         interrupt_value = None
@@ -795,13 +871,15 @@ _HITL_ABORT = "abort"          # stop the turn
 
 
 def _collect_hitl_decisions(interrupts) -> tuple[list[dict], str]:
-    """Prompt user for HITL decisions.
+    """Prompt user for HITL decisions on pending tool executions.
+
+    Args:
+        interrupts: List of LangGraph interrupt task objects to review.
 
     Returns:
-        (decisions, signal) where signal is one of:
-        - _HITL_CONTINUE: process normally
-        - _HITL_APPROVE_ALL: auto-approve all remaining in this turn
-        - _HITL_ABORT: reject all and stop the turn
+        Tuple of (decisions, signal) where decisions is a list of
+        approve/reject/edit dicts and signal is one of _HITL_CONTINUE,
+        _HITL_APPROVE_ALL, or _HITL_ABORT.
     """
     decisions = []
 
@@ -934,7 +1012,16 @@ def _collect_hitl_decisions(interrupts) -> tuple[list[dict], str]:
 
 
 def _apply_natural_language_edit(tool_name: str, original_args: dict, user_instruction: str) -> dict | None:
-    """Use a lightweight LLM to apply a natural language edit to tool args."""
+    """Use a lightweight LLM to apply a natural language edit to tool args.
+
+    Args:
+        tool_name: Name of the tool being edited.
+        original_args: Current tool arguments dict.
+        user_instruction: Natural language description of desired changes.
+
+    Returns:
+        Updated args dict on success, or None if parsing/LLM call failed.
+    """
     from totoro.core.models import create_lightweight_model
 
     model = create_lightweight_model()
