@@ -627,8 +627,22 @@ def _run_subagent_in_process(
     )
 
     # Minimal middleware — subagents do one focused task, no planning/delegation
+    fs_middleware = FilesystemMiddleware(backend=backend)
+
+    # Filter filesystem tools by agent role to reduce token overhead
+    # mei (researcher): read-only — no write, edit, execute (~848 tokens saved)
+    # tatsuo (reviewer): read + execute — no write, edit (~156 tokens saved)
+    # satsuki, susuwatari: all tools (need full file I/O)
+    _TOOL_PROFILES = {
+        "mei":     {"ls", "read_file", "glob", "grep"},
+        "tatsuo":  {"ls", "read_file", "glob", "grep", "execute"},
+    }
+    allowed = _TOOL_PROFILES.get(character_name)
+    if allowed is not None:
+        fs_middleware.tools = [t for t in fs_middleware.tools if t.name in allowed]
+
     middleware = [
-        FilesystemMiddleware(backend=backend),
+        fs_middleware,
         PatchToolCallsMiddleware(),
         SanitizeMiddleware(),
         StallDetectorMiddleware(max_empty_turns=2),
