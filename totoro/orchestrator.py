@@ -377,25 +377,34 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
     )
 
     # Build plan display (used both before and after execution)
-    task_list = []
+    from totoro.colors import DIM, BOLD, BLUE, AMBER_LT, RESET, IVORY
+    task_lines = []
     for i, t in enumerate(execution_tasks):
         desc = t.get("task", t.get("description", ""))
         # Strip injected context headers — show only the actual task
         if "## Your Task\n" in desc:
             desc = desc.split("## Your Task\n")[-1]
-        task_list.append(f"  {i+1}. [{t.get('type')}] {desc[:80]}")
-    plan_display = f"── Plan ({len(execution_tasks)} tasks) ──\n" + "\n".join(task_list)
+        agent_type = t.get("type", "?")
+        task_lines.append(f"  {DIM}{i+1}.{RESET} {BLUE}{agent_type}{RESET} {IVORY}{desc[:80]}{RESET}")
+
+    plan_header = f"{DIM}── {AMBER_LT}Plan{DIM} ({len(execution_tasks)} tasks) ──{RESET}"
+    plan_display_colored = plan_header + "\n" + "\n".join(task_lines)
+    # Plain text version for tool result (no ANSI)
+    plan_display_plain = f"Plan ({len(execution_tasks)} tasks):\n" + "\n".join(
+        f"  {i+1}. [{t.get('type')}] {(t.get('task','') if '## Your Task' not in t.get('task','') else t.get('task','').split('## Your Task\n')[-1])[:80]}"
+        for i, t in enumerate(execution_tasks)
+    )
 
     # Print plan before curses TUI starts (visible in scrollback)
     from totoro.diff import safe_print
-    safe_print(f"\n{plan_display}\n")
+    safe_print(f"\n{plan_display_colored}\n")
 
     # Phase 2: Run execution agents
     exec_results = _run_parallel(execution_tasks)
 
-    # Combine results (returned to main agent as tool result)
+    # Combine results (returned to main agent as tool result — no ANSI colors)
     MAX_RESULT_CHARS = 1500
-    parts = [plan_display]
+    parts = [plan_display_plain]
 
     # Execution results
     parts.append("── Execution ──")

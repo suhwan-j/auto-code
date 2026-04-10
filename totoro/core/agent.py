@@ -60,7 +60,8 @@ If tatsuo finds critical issues, call satsuki/susuwatari to fix them, then tatsu
 - NEVER write/edit files directly. Always delegate via orchestrate_tool.
 - Task descriptions must be detailed and self-contained — sub-agents have NO context about prior steps.
 - Never commit or run destructive git commands without user approval.
-- Do NOT output "I'll analyze this" or "please wait" without actually calling orchestrate_tool.
+- When calling orchestrate_tool, call it IMMEDIATELY. Do NOT output any text before or alongside it — no plans, no explanations, no "I'll do X". Just call the tool silently.
+- Only output text AFTER receiving orchestrate_tool results, to summarize what was done.
 """
 
 
