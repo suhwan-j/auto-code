@@ -5,6 +5,7 @@ subagent child processes can request approval from the parent process.
 """
 
 import fnmatch
+import os
 import queue
 import uuid
 import multiprocessing as mp
@@ -46,8 +47,6 @@ def _matches_allow(
             fpath = tool_args.get("file_path", tool_args.get("path", ""))
             if fnmatch.fnmatch(fpath, pat):
                 return True
-            import os
-
             if fnmatch.fnmatch(os.path.basename(fpath), pat):
                 return True
     return False
@@ -169,9 +168,12 @@ class SubagentHITLMiddleware(AgentMiddleware):
 
         for idx, tc in enumerate(last_ai_msg.tool_calls):
             matched = any(i == idx for i, _ in needs_approval)
-            if matched and decision_idx < len(decisions):
-                decision = decisions[decision_idx]
-                decision_idx += 1
+            if matched:
+                if decision_idx < len(decisions):
+                    decision = decisions[decision_idx]
+                    decision_idx += 1
+                else:
+                    decision = {"type": "approve"}
                 dtype = decision.get("type", "approve")
 
                 if dtype == "approve":

@@ -263,6 +263,9 @@ def main():
     )
     args = parser.parse_args()
 
+    # Suppress tqdm progress bars from dependencies
+    os.environ.setdefault("TQDM_DISABLE", "1")
+
     from totoro.config.settings import load_config, ensure_api_keys
 
     ensure_api_keys(force_setup=args.setup)
@@ -644,14 +647,23 @@ def _stream_with_hitl(
     input_payload = {"messages": [{"role": "user", "content": user_input}]}
 
     max_hitl_rounds = 20  # Safety limit to prevent infinite loops
+    max_empty_retries = 2  # Retry if model returns empty response
+    empty_retry_count = 0
     try:
         for _round in range(max_hitl_rounds):
             # Activate hotkey listener during streaming
             if hotkey:
                 hotkey.activate()
 
+            prev_tools = tracker.tool_count
+            prev_tokens = tracker.token_output
+
             interrupt_info = _do_stream(
-                agent, input_payload, config, tracker=tracker, verbose=verbose
+                agent,
+                input_payload,
+                config,
+                tracker=tracker,
+                verbose=verbose,
             )
 
             # Deactivate hotkey before HITL or exit
@@ -664,6 +676,25 @@ def _stream_with_hitl(
                 set_auto_approve(True)
 
             if interrupt_info is None:
+                # Detect empty response (no tools, no output)
+                no_new_tools = tracker.tool_count == prev_tools
+                no_new_tokens = tracker.token_output == prev_tokens
+                if (
+                    no_new_tools
+                    and no_new_tokens
+                    and empty_retry_count < max_empty_retries
+                ):
+                    empty_retry_count += 1
+                    _safe_print(
+                        f"{_YELLOW}[Empty response — "
+                        f"retrying {empty_retry_count}"
+                        f"/{max_empty_retries}]"
+                        f"{_RESET}",
+                        flush=True,
+                    )
+                    import time
+                    time.sleep(2)
+                    continue
                 break
 
             # Clear dashboard before HITL prompt

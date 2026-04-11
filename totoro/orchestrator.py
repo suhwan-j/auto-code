@@ -730,7 +730,6 @@ def _run_parallel(
         try:
             _curses.wrapper(tui.run)
         except Exception as e:
-            # curses.wrapper already calls endwin(), don't call it again
             err_msg = str(e)
             if (
                 "nocbreak" not in err_msg
@@ -741,6 +740,9 @@ def _run_parallel(
                     file=_sys.stderr,
                     flush=True,
                 )
+        finally:
+            # Always restore terminal after curses
+            os.system("stty sane 2>/dev/null")
         # Panel stays disabled — cli.py handles cleanup
     else:
         # Non-curses: poll for HITL requests and process completion
@@ -770,30 +772,14 @@ def _run_parallel(
     monitor_halt.set()
     monitor.join(timeout=2)
 
-    # Reap all processes — should be dead already
+    # Reap all processes — terminate immediately, don't wait
     for label, p in processes.items():
-        # Join with generous timeout
-        p.join(timeout=30)
-
-        # Force kill if still alive
         if p.is_alive():
-            import sys as _sys
-
-            print(
-                f"\n  [warn] {label}: timed out, terminating...",
-                file=_sys.stderr,
-                flush=True,
-            )
             p.terminate()
-            p.join(timeout=5)
+        p.join(timeout=3)
         if p.is_alive():
-            print(
-                f"  [warn] {label}: force killing",
-                file=_sys.stderr,
-                flush=True,
-            )
             p.kill()
-            p.join(timeout=2)
+            p.join(timeout=1)
 
         # Collect result
         try:
@@ -813,14 +799,21 @@ def _run_parallel(
         except (ValueError, OSError):
             pass
 
-    # Stop collector and drain queue
+    # Stop collector and drain all queues
     collector_halt.set()
     collector.join(timeout=3)
-    try:
-        while not event_queue.empty():
-            event_queue.get_nowait()
-    except Exception:
-        pass
+    for q in [event_queue, *response_holders.values(),
+              *result_holders.values()]:
+        try:
+            while not q.empty():
+                q.get_nowait()
+        except Exception:
+            pass
+        try:
+            q.close()
+            q.join_thread()
+        except Exception:
+            pass
 
     # Disable panel BEFORE printing summary to prevent render thread race.
     # Must hold lock so render thread can't write to stdout concurrently.
@@ -866,7 +859,6 @@ def _run_parallel(
                             all_files.append(f)
                 if all_files:
                     from totoro.colors import BLUE, DIM, RESET
-                    import os
 
                     unique_files = list(dict.fromkeys(all_files))
                     for fp in unique_files[:10]:
@@ -889,25 +881,33 @@ def _run_parallel(
     return results
 
 
+_IDLE_TIMEOUT = 300  # 5 min with 0 tools = stuck
+
+
 def _process_monitor(
     processes: dict[str, mp.Process],
     pane_manager: PaneManager | None,
     tracker,
     halt: threading.Event,
 ):
-    """Monitor thread: detect process exit, mark panes done.
+    """Monitor thread: detect process exit and kill idle processes.
 
-    This solves the deadlock where TUI waits for is_active=False but
-    complete_subagent() was only called after TUI exit.
+    A process is considered stuck if it has 0 tool calls for
+    IDLE_TIMEOUT seconds. Active processes (with tool calls)
+    are never killed by this monitor.
 
     Args:
-        processes: Dict mapping labels to multiprocessing.Process instances.
+        processes: Dict mapping labels to Process instances.
         pane_manager: PaneManager instance or None.
         tracker: StatusTracker instance or None.
         halt: Threading event to signal this monitor to stop.
     """
     reaped: set[str] = set()
+    start_times: dict[str, float] = {
+        label: time.time() for label in processes
+    }
     while not halt.is_set():
+        now = time.time()
         for label, p in processes.items():
             if label in reaped:
                 continue
@@ -915,7 +915,41 @@ def _process_monitor(
                 reaped.add(label)
                 if pane_manager:
                     pane_manager.complete_subagent(label)
-        # All done? Stop polling.
+            elif pane_manager:
+                # Kill only if idle (0 tools) for too long
+                panes = pane_manager.get_panes()
+                pane = next(
+                    (pa for pa in panes if pa.label == label),
+                    None,
+                )
+                idle_secs = now - start_times[label]
+                if (
+                    pane
+                    and pane.tool_count == 0
+                    and pane.status != "waiting_approval"
+                    and idle_secs > _IDLE_TIMEOUT
+                ):
+                    reaped.add(label)
+                    try:
+                        p.terminate()
+                        p.join(timeout=3)
+                        if p.is_alive():
+                            p.kill()
+                    except Exception:
+                        pass
+                    pane_manager.update_subagent(
+                        SubagentEvent(
+                            label=label,
+                            event_type="error",
+                            data={
+                                "text": (
+                                    f"Killed: idle {int(idle_secs)}s"
+                                    f" with 0 tool calls"
+                                )
+                            },
+                        )
+                    )
+                    pane_manager.complete_subagent(label)
         if len(reaped) == len(processes):
             break
         halt.wait(0.3)

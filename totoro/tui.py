@@ -140,7 +140,6 @@ def _short_path(path: str) -> str:
     """Extract short display path from full file path."""
     if not path:
         return "?"
-    import os
 
     return os.path.basename(path)
 
@@ -333,7 +332,13 @@ class SplitPaneTUI:
         curses.endwin()
         os.system("stty sane 2>/dev/null")
         import sys
+        import termios
 
+        # Flush any leftover input from curses mode
+        try:
+            termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+        except Exception:
+            pass
         sys.stdout.write("\033[?25h")  # Show cursor
         sys.stdout.flush()
 
@@ -380,17 +385,43 @@ class SplitPaneTUI:
         """
         self._exit_curses(stdscr)
 
+        try:
+            self._handle_hitl_prompts(stdscr, first_event)
+        except (KeyboardInterrupt, EOFError):
+            pass
+        except Exception as e:
+            import sys
+            print(
+                f"\n  \033[31m[HITL error] {e}\033[0m",
+                file=sys.stderr, flush=True,
+            )
+        finally:
+            self._enter_curses(stdscr)
+
+    def _handle_hitl_prompts(self, stdscr, first_event):
+        """Process HITL prompts (called between curses exit/enter)."""
+        # Track approved commands to auto-approve duplicates
+        approved_cmds: set = set()
+
         # Process first event + any that arrive while we're prompting
         pending = [first_event]
         while pending:
             event = pending.pop(0)
             label = event.label
             tool_requests = event.data.get("tool_requests", [])
-            decisions = []
+            # Build per-index decisions (preserves order)
+            decisions = [None] * len(tool_requests)
 
-            for tr in tool_requests:
+            for idx, tr in enumerate(tool_requests):
                 tool_name = tr.get("name", "?")
                 tool_args = tr.get("args", {})
+                cmd_key = f"{tool_name}:{tool_args.get('command', tool_args.get('file_path', ''))}"
+
+                # Skip duplicates (within event + across batch)
+                if cmd_key in approved_cmds:
+                    decisions[idx] = {"type": "approve"}
+                    continue
+                approved_cmds.add(cmd_key)
 
                 print(
                     f"\n  \033[33m[APPROVAL REQUIRED]"
@@ -412,64 +443,80 @@ class SplitPaneTUI:
                 try:
                     choice = input("  > ").strip()
                 except (EOFError, KeyboardInterrupt):
-                    decisions.append(
-                        {"type": "reject", "message": "Aborted by user"}
-                    )
+                    decisions[idx] = {
+                        "type": "reject",
+                        "message": "Aborted by user",
+                    }
                     break
 
                 if choice in ("A", "approve all", "aa"):
-                    decisions.append({"type": "approve_all"})
+                    decisions[idx] = {"type": "approve_all"}
                     self._global_auto_approve = True
-                    # Set module-level flag too
                     import totoro.orchestrator as _orch
-
                     _orch._runtime_auto_approve = True
                     print(
                         "  \033[33m\u26a1 Auto-approve"
-                        " enabled for all"
-                        " subagents\033[0m"
+                        " enabled\033[0m"
                     )
+                    # Fill remaining with approve
+                    for j in range(idx + 1, len(decisions)):
+                        if decisions[j] is None:
+                            decisions[j] = {"type": "approve"}
                     break
-                elif choice.lower() in ("r", "reject", "n", "no"):
-                    decisions.append(
-                        {
-                            "type": "reject",
-                            "message": f"User rejected {tool_name}",
-                        }
-                    )
+                elif choice.lower() in (
+                    "r", "reject", "n", "no"
+                ):
+                    decisions[idx] = {
+                        "type": "reject",
+                        "message": f"User rejected {tool_name}",
+                    }
                 elif choice.lower() in ("e", "edit"):
                     try:
-                        edit_instruction = input("  How to change? > ").strip()
+                        edit_instruction = input(
+                            "  How to change? > "
+                        ).strip()
                     except (EOFError, KeyboardInterrupt):
-                        decisions.append({"type": "approve"})
+                        decisions[idx] = {"type": "approve"}
                         continue
-                    if not edit_instruction or not isinstance(tool_args, dict):
-                        decisions.append({"type": "approve"})
+                    if (
+                        not edit_instruction
+                        or not isinstance(tool_args, dict)
+                    ):
+                        decisions[idx] = {"type": "approve"}
                     else:
                         edited_args = dict(tool_args)
                         if (
                             "=" in edit_instruction
-                            and " " not in edit_instruction.split("=")[0]
+                            and " "
+                            not in edit_instruction.split("=")[0]
                         ):
-                            key, val = edit_instruction.split("=", 1)
+                            key, val = edit_instruction.split(
+                                "=", 1
+                            )
                             edited_args[key.strip()] = val.strip()
-                        decisions.append(
-                            {
-                                "type": "edit",
-                                "edited_action": {
-                                    "name": tool_name,
-                                    "args": edited_args,
-                                },
-                            }
-                        )
+                        decisions[idx] = {
+                            "type": "edit",
+                            "edited_action": {
+                                "name": tool_name,
+                                "args": edited_args,
+                            },
+                        }
                 else:
-                    decisions.append({"type": "approve"})
+                    decisions[idx] = {"type": "approve"}
+
+            # Fill any remaining None slots with approve
+            decisions = [
+                d if d is not None else {"type": "approve"}
+                for d in decisions
+            ]
 
             # Send response to child
             rq = self.response_queues.get(label)
             if rq:
                 try:
-                    rq.put({"decisions": decisions}, timeout=1)
+                    rq.put(
+                        {"decisions": decisions}, timeout=1
+                    )
                 except Exception:
                     pass
             self._send_hitl_response_event(label)
@@ -486,8 +533,6 @@ class SplitPaneTUI:
                 pending.append(next_ev)
             except queue.Empty:
                 pass
-
-        self._enter_curses(stdscr)
 
     def _render_divider(self, height: int):
         """Draw vertical divider as subtle dotted line.
@@ -696,10 +741,14 @@ class SplitPaneTUI:
                 if pane and pane.description and row < height - 1:
                     indent = 3 + len(child_pre)
                     prefix = "▸ "
-                    # Leave 2-char margin to avoid touching divider
+                    # Leave 2-char margin
                     max_w = w - indent - _wcswidth(prefix) - 2
+                    # Flatten newlines so wrap works on one block
+                    flat_desc = " ".join(
+                        pane.description.replace("\n", " ").split()
+                    )
                     desc_lines = _wrap_text(
-                        pane.description, max_w, max_lines=2
+                        flat_desc, max_w, max_lines=2
                     )
                     for li, dline in enumerate(desc_lines):
                         if row >= height - 1:
