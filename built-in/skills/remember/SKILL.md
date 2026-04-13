@@ -78,8 +78,8 @@ Rules:
 
 ## Examples
 
-User: "안녕 나는 Knox Drive 개발자야"
-→ `[{"type": "user", "name": "role", "content": "Knox Drive developer"}]`
+User: "안녕 나는 Google 개발자야"
+→ `[{"type": "user", "name": "role", "content": "Google developer"}]`
 
 User: "이 bundled PR 방식 좋다, 이런 리팩토링은 쪼개면 오히려 번거로워"
 → `[{"type": "preferred", "name": "bundled-pr", "content": "Prefers bundled PRs for refactors — splitting creates unnecessary churn"}]`
